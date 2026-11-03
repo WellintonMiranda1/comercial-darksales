@@ -1,27 +1,42 @@
-# Comercial DarkSales — versão para Vercel
+# Comercial DarkSales — pronto para publicar na Vercel
 
-Aplicativo de gestão comercial (Flask): vendedores, leads, trial, assinantes, pagamentos e comissões.
+Sistema completo de gestão comercial: administrador Geral, vendedores, oportunidades, trial, assinaturas, vencimentos, pagamentos e comissões.
 
-## Publicar na Vercel
+## Atualizar o site já criado (simples)
 
-1. Extraia este ZIP e envie **o conteúdo desta pasta** para seu repositório no GitHub (não inclua banco de dados ou `.env`).
-2. Na Vercel: **Add New → Project → Import** o repositório.
-3. Crie um banco **PostgreSQL persistente**, por exemplo integrando Neon à Vercel pelo Marketplace / Storage. Copie a URL de conexão do banco.
-4. Em **Project Settings → Environment Variables**, configure:
-   - `DATABASE_URL`: URL PostgreSQL completa (conexão SSL; se necessário use URL de pool fornecida pelo provedor).
-   - `DARKSALES_SECRET_KEY`: string aleatória longa e secreta (32+ caracteres).
-   - `DARKSALES_HTTPS`: `1`.
-5. Clique **Deploy** ou **Redeploy**, se já tinha feito o primeiro deploy antes de configurar variáveis.
-6. Primeiro login: usuário `geral`, senha inicial `2026`. O aplicativo obriga alteração no primeiro acesso.
+1. Extraia o ZIP.
+2. Copie **o conteúdo** da pasta extraída para a pasta `comercial-darksales` aberta no VS Code. Substitua arquivos; **não apague a pasta oculta `.git`**.
+3. No terminal do VS Code, execute, um comando de cada vez:
 
-**Importante:** não basta publicar o ZIP sem configurar o PostgreSQL e as variáveis. A Vercel não preserva arquivos SQLite locais entre execuções. Este pacote usa PostgreSQL quando `DATABASE_URL` estiver definido. As fotos também ficam armazenadas no PostgreSQL nesse modo.
+   ```bash
+   git add .
+   git commit -m "Atualizar Comercial DarkSales"
+   git push origin main
+   ```
+4. A Vercel publica automaticamente o novo código, se estiver conectada à branch `main`. Em Vercel > Deployments, abra o endereço da publicação mais recente.
 
-**Segurança:** repositório público só com arquivos de código; jamais inclua `.env`, banco ou credenciais no GitHub. O usuário inicial `geral` tem senha provisória fraca e exige troca. Para produção pública com clientes reais, recomenda-se habilitar proteção anti-força-bruta, backup automático do PostgreSQL e monitoramento de erros.
+## Para abrir hoje sem banco externo
 
-## Para executar localmente
+O aplicativo **não exige** `DATABASE_URL` para iniciar. Na Vercel, o sistema usa automaticamente um banco SQLite **temporário** em `/tmp` quando `DATABASE_URL` não está configurado. Assim, as telas, cadastros de teste, vendedores e comissões funcionam, mas **os dados podem sumir a qualquer momento** e não são compartilhados de maneira confiável entre diferentes instâncias/usuários. É apenas para avaliação; **não use dados reais de clientes** sem armazenamento persistente.
 
-Instale Python 3.11+, crie um ambiente virtual e rode `pip install -r requirements.txt`. Execute `python app.py` e abra `http://127.0.0.1:5000`. Sem `DATABASE_URL`, é usado SQLite local (apenas desenvolvimento).
+A chave `DARKSALES_SECRET_KEY` deve continuar configurada na Vercel para que as sessões de login não sejam invalidadas entre requisições. Ela é uma configuração interna e **não impede que o endereço seja público**. Recomenda-se manter `DARKSALES_HTTPS=1`.
 
-## Comissões
+Você **não precisa** criar `DARKSALES_DEMO_MODE` nesta versão.
 
-Mensal: 10% de cada mês confirmado. Semestral: 15% do valor de 6 meses, pago de uma vez no primeiro mês. Anual: 20% do valor de 12 meses, pago de uma vez no primeiro mês. O sistema registra pagamentos manualmente e usa a data informada para relatórios; não processa pagamentos automaticamente.
+Acesso inicial: usuário `geral`, senha provisória `2026` (trocar no primeiro acesso). O site fica aberto na página de login; somente pessoas autorizadas acessam o painel.
+
+## Quando quiser salvar dados de verdade
+
+Adicione um banco PostgreSQL e configure `DATABASE_URL` nas variáveis de ambiente da Vercel, depois faça Redeploy. O mesmo sistema utiliza PostgreSQL, sem trocar interface ou outras funcionalidades. **Registros do SQLite temporário não são migrados automaticamente.**
+
+## Executar no computador
+
+Requer Python 3.11+. Instale as dependências com `pip install -r requirements.txt`, execute `python app.py` e abra `http://127.0.0.1:5000`. Fora da Vercel, sem PostgreSQL, o SQLite fica em `instance/darksales.db` e persiste localmente.
+
+## Regras das comissões
+
+- Mensal: 10% sobre cada mensalidade paga, no respectivo mês.
+- Semestral: 15% sobre seis mensalidades, integralmente no mês do pagamento inicial.
+- Anual: 20% sobre doze mensalidades, integralmente no mês do pagamento inicial.
+
+Pagamentos são registrados manualmente. O projeto não processa cobranças automaticamente.

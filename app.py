@@ -20,13 +20,16 @@ app = Flask(__name__, instance_path=str(BASE / 'instance'))
 app.config.update(SECRET_KEY=os.environ.get('DARKSALES_SECRET_KEY') or secrets.token_hex(32),
     MAX_CONTENT_LENGTH=3*1024*1024, SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('DARKSALES_HTTPS')=='1')
-DB = BASE / 'instance' / 'darksales.db'
 DATABASE_URL = os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL')
 IS_VERCEL = bool(os.environ.get('VERCEL'))
-if IS_VERCEL and (not DATABASE_URL or not os.environ.get('DARKSALES_SECRET_KEY')):
-    raise RuntimeError('Configure DATABASE_URL e DARKSALES_SECRET_KEY nas variáveis de ambiente da Vercel.')
-UPLOADS = BASE / 'instance' / 'avatars'
-if not IS_VERCEL:
+# Vercel permits writing only to /tmp. Without DATABASE_URL the full app runs
+# with TEMPORARY local storage. For permanent shared records, add PostgreSQL later.
+DATA_DIR = Path('/tmp/comercial_darksales') if IS_VERCEL and not DATABASE_URL else BASE / 'instance'
+if not DATABASE_URL:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB = DATA_DIR / 'darksales.db'
+UPLOADS = DATA_DIR / 'avatars'
+if not DATABASE_URL:
     UPLOADS.mkdir(parents=True, exist_ok=True)
 STATUSES = {'lead':'Para entrar', 'trial':'Em trial', 'active':'Ativo', 'late':'Inadimplente', 'cancelled':'Cancelado', 'lost':'Perdido'}
 TIERS = ('Básico','Intermediário','Completo')
