@@ -137,6 +137,20 @@ def shift_month(iso, count):
     return add_months(iso,count)
 
 
+def next_monthly_payment_in_window(client, start, end):
+    """Predict monthly due dates every 30 days without altering payments."""
+    if client['status']!='active' or client['cycle']!='monthly' or not client['due_date']:
+        return False
+    due=date.fromisoformat(client['due_date'])
+    first=date.fromisoformat(start)
+    cutoff=date.fromisoformat(end)
+    if due < first:
+        step=(first-due).days//30
+        due+=timedelta(days=step*30)
+        while due<first:due+=timedelta(days=30)
+    return first<=due<cutoff
+
+
 def today():return date.today().isoformat()
 
 
@@ -159,7 +173,7 @@ def security_check():
 
 @app.context_processor
 def inject():
-    return dict(me=get_user(), csrf=session.get('csrf',''), statuses=STATUSES, tiers=TIERS, cycles=CYCLES, money=fmt, today=today(), today_date=date.today())
+    return dict(me=get_user(), csrf=session.get('csrf',''), statuses=STATUSES, tiers=TIERS, cycles=CYCLES, money=fmt, today=today(), today_date=date.today(),next5=(date.today()+timedelta(days=5)).isoformat())
 
 
 def admin_only(fn):
@@ -214,7 +228,8 @@ def dashboard():
         return sum(x['commission_cents'] for x in payments if start<=date.fromisoformat(x['paid_on'])<end)
     current=amount_for(first,next_first)
     # Preview next month's recurring monthly commissions; other plans enter only when a new payment is recorded.
-    forecast=sum(round(x['monthly_price_cents']*.10) for x in clients if x['status']=='active' and x['cycle']=='monthly')
+    forecast=sum(round(x['monthly_price_cents']*.10) for x in clients
+                 if next_monthly_payment_in_window(x,next_first.isoformat(),following.isoformat()))
     return render_template('dashboard.html',counts=counts,clients=clients,due=due,late=late,mrr=mrr,
                            current=current,forecast=forecast,payments=payments,next_month=next_first.strftime('%Y-%m'))
 
@@ -254,9 +269,8 @@ def client_form_data(existing=None):
     if status in ('active','late') and not start_date:
         start_date = today()
     due_date=contract_end(start_date,cycle) if start_date and status in ('active','late','cancelled') else None
-    if (existing and due_date and existing['start_date']==start_date
-            and existing['cycle']==cycle and existing['due_date']):
-        # Preserva o vencimento após renovação ao editar outras informações.
+    if existing and existing['due_date'] and existing['start_date']==start_date and existing['cycle']==cycle:
+        # Nunca recuar o vencimento após um pagamento/renovação registrado.
         due_date=existing['due_date']
     vals.extend([start_date or None,due_date,trial_end or None,call_date or None])
     vals.append(request.form.get('notes','').strip())
@@ -294,6 +308,7 @@ def new_client():
                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
                     client_id=inserted.lastrowid
                 if vals[5]=='active' and request.form.get('payment_confirmed')=='on':
+                    if vals[8] <= 0: raise ValueError('Informe um valor mensal antes de confirmar o pagamento.')
                     record_first_payment(c,client_id,vals[4],vals[7],vals[8],vals[9] or today(),today())
             flash('Cliente cadastrado.' + (' Comissão registrada.' if vals[5]=='active' and request.form.get('payment_confirmed')=='on' else ''),'success')
             return redirect(url_for('client_detail',client_id=client_id))
@@ -309,8 +324,8 @@ def client_detail(client_id):
             vals=client_form_data(row)
             with db() as c:
                 c.execute('''UPDATE clients SET name=?,company=?,phone=?,email=?,seller_id=?,status=?,tier=?,cycle=?,monthly_price_cents=?,start_date=?,due_date=?,trial_end=?,call_date=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',vals+[client_id])
-                if vals[5]=='active' and request.form.get('payment_confirmed')=='on':
-                    record_first_payment(c,client_id,vals[4],vals[7],vals[8],vals[9] or today(),today())
+                # Pagamentos são lançados somente pelo formulário financeiro separado.
+                # Editar uma ficha nunca gera uma nova comissão.
             flash('Cliente atualizado.','success');return redirect(url_for('client_detail',client_id=client_id))
         except (ValueError,TypeError) as e:flash(str(e),'error')
     with db() as c:payment_rows=c.execute('SELECT * FROM payments WHERE client_id=? ORDER BY paid_on DESC,id DESC',(client_id,)).fetchall()
@@ -321,24 +336,55 @@ def client_detail(client_id):
 def payment_add(client_id):
     client=own_client(client_id)
     try:
-        if client['cycle'] not in CYCLES:raise ValueError('Tipo de contrato inválido.')
-        months=CYCLES[client['cycle']][1];pct=CYCLES[client['cycle']][2]
-        paid_on=request.form.get('paid_on') or today();date.fromisoformat(paid_on)
+        if client['status'] not in ('active','late'):
+            raise ValueError('Marque o cliente como ativo antes de registrar um pagamento.')
+        if client['cycle'] not in CYCLES:
+            raise ValueError('Tipo de contrato inválido.')
+        paid_on=request.form.get('paid_on') or today()
+        received=date.fromisoformat(paid_on)
         with db() as c:
-            latest=c.execute('SELECT period_end FROM payments WHERE client_id=? ORDER BY period_end DESC LIMIT 1',(client_id,)).fetchone()
-        period_start=request.form.get('period_start') or (latest['period_end'] if latest else None) or client['start_date'] or paid_on
-        date.fromisoformat(period_start)
-        end=contract_end(period_start,client['cycle'])
-        total=client['monthly_price_cents']*months
-        if total<=0:raise ValueError('Informe um valor mensal maior que zero.')
-        commission=round(total*pct)
-        with db() as c:
-            c.execute('''INSERT INTO payments(client_id,seller_id,paid_on,amount_cents,period_start,period_end,commission_cents,commission_rate)
-                         VALUES(?,?,?,?,?,?,?,?)''',(client_id,client['seller_id'],paid_on,total,period_start,end,commission,round(pct*100)))
-            c.execute("UPDATE clients SET status='active',start_date=COALESCE(start_date,?),due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",(period_start,end,client_id))
-        flash('Pagamento confirmado e comissão gerada.','success')
-    except (sqlite3.IntegrityError, psycopg.IntegrityError):flash('Este período já tem pagamento registrado.','error')
-    except ValueError as e:flash(str(e),'error')
+            # O servidor controla a competência. Não aceitar início digitado pelo navegador.
+            last=c.execute('''SELECT * FROM payments WHERE client_id=?
+                              ORDER BY period_end DESC,id DESC LIMIT 1''',(client_id,)).fetchone()
+            if last:
+                # Sem duplicar parcelas pagas no primeiro mês.
+                # Renovação só pode ser lançada 5 dias antes do final ou depois.
+                last_end=date.fromisoformat(last['period_end'])
+                if received < last_end - timedelta(days=5):
+                    raise ValueError('Este contrato já tem pagamento registrado. A renovação só pode ser confirmada nos 5 dias anteriores ao vencimento.')
+                period_start=last['period_end']
+            else:
+                period_start=client['start_date'] or paid_on
+            created=record_first_payment(c,client_id,client['seller_id'],client['cycle'],
+                                         client['monthly_price_cents'],period_start,paid_on)
+            if not created:
+                raise ValueError('Este período já possui pagamento. Nenhuma nova comissão foi gerada.')
+            end=contract_end(period_start,client['cycle'])
+            c.execute("UPDATE clients SET status='active',start_date=COALESCE(start_date,?),due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                      (period_start,end,client_id))
+        flash('Pagamento registrado uma única vez e comissão gerada.','success')
+    except (sqlite3.IntegrityError, psycopg.IntegrityError):
+        flash('Pagamento repetido: este período já está registrado.','error')
+    except (ValueError,TypeError) as e:
+        flash(str(e),'error')
+    return redirect(url_for('client_detail',client_id=client_id))
+
+
+@app.post('/clients/<int:client_id>/payments/<int:payment_id>/delete')
+@admin_only
+def payment_delete(client_id,payment_id):
+    own_client(client_id)
+    if request.form.get('confirm_delete')!='YES':
+        abort(400,'Confirmação necessária.')
+    with db() as c:
+        p=c.execute('SELECT * FROM payments WHERE id=? AND client_id=?',(payment_id,client_id)).fetchone()
+        if not p: abort(404)
+        c.execute('DELETE FROM payments WHERE id=? AND client_id=?',(payment_id,client_id))
+        last=c.execute('SELECT period_end FROM payments WHERE client_id=? ORDER BY period_end DESC,id DESC LIMIT 1',(client_id,)).fetchone()
+        client=c.execute('SELECT start_date,cycle FROM clients WHERE id=?',(client_id,)).fetchone()
+        due=last['period_end'] if last else (contract_end(client['start_date'],client['cycle']) if client['start_date'] else None)
+        c.execute('UPDATE clients SET due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(due,client_id))
+    flash('Lançamento excluído e vencimento recalculado. Confira o histórico.','success')
     return redirect(url_for('client_detail',client_id=client_id))
 
 
@@ -379,7 +425,8 @@ def commissions():
             future_sql+=' AND cl.seller_id=?'
             future_args.append(int(sid))
         with db() as c:
-            forecast_rows=c.execute(future_sql,future_args).fetchall()
+            forecast_rows=[r for r in c.execute(future_sql,future_args).fetchall()
+                           if next_monthly_payment_in_window(r,month_start,month_end)]
     forecast_total=sum(round(r['monthly_price_cents']*.10) for r in forecast_rows)
     return render_template('commissions.html', records=rows,mon=mon,total=total,
                            pending=pending,received=received,sellers=seller_choices(),
