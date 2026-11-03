@@ -1,57 +1,34 @@
-# Comercial DarkSales — pronto para publicar na Vercel
+# Comercial DarkSales — atualização consolidada
 
-Sistema completo de gestão comercial: administrador Geral, vendedores, oportunidades, trial, assinaturas, vencimentos, pagamentos e comissões.
+Atualiza o site já publicado no mesmo repositório GitHub, sem criar outro projeto.
 
-## Atualizar o site já criado (simples)
+## Publicação
 
-1. Extraia o ZIP.
-2. Copie **o conteúdo** da pasta extraída para a pasta `comercial-darksales` aberta no VS Code. Substitua arquivos; **não apague a pasta oculta `.git`**.
-3. No terminal do VS Code, execute, um comando de cada vez:
+1. Extraia o ZIP e copie os arquivos para a pasta `comercial-darksales` aberta no VS Code. **Não apague `.git`**.
+2. Execute um comando por vez:
 
-   ```bash
-   git add .
-   git commit -m "Atualizar Comercial DarkSales"
-   git push origin main
-   ```
-4. A Vercel publica automaticamente o novo código, se estiver conectada à branch `main`. Em Vercel > Deployments, abra o endereço da publicação mais recente.
+```bash
+git add .
+git commit -m "Correcoes Comercial DarkSales"
+git push origin main
+```
 
-## Para abrir hoje sem banco externo
+3. Confira o novo commit em Vercel > Deployments e abra o site.
 
-O aplicativo **não exige** `DATABASE_URL` para iniciar. Na Vercel, o sistema usa automaticamente um banco SQLite **temporário** em `/tmp` quando `DATABASE_URL` não está configurado. Assim, as telas, cadastros de teste, vendedores e comissões funcionam, mas **os dados podem sumir a qualquer momento** e não são compartilhados de maneira confiável entre diferentes instâncias/usuários. É apenas para avaliação; **não use dados reais de clientes** sem armazenamento persistente.
+## Alterações
 
-A chave `DARKSALES_SECRET_KEY` deve continuar configurada na Vercel para que as sessões de login não sejam invalidadas entre requisições. Ela é uma configuração interna e **não impede que o endereço seja público**. Recomenda-se manter `DARKSALES_HTTPS=1`.
+- Menu lateral sem abas repetidas (Para entrar, Trial, Ativos permanecem em Clientes).
+- Vencimento automático no navegador e no servidor: mensal **30 dias**, semestral **6 meses de calendário**, anual **12 meses de calendário**.
+- Fim do trial exibido somente para etapa Trial. Campos de plano aparecem em Ativo/Inadimplente/Cancelado.
+- No cadastro de cliente ativo, marque **Pagamento confirmado** para gerar imediatamente comissão no mês atual. Caso ainda não tenha pago, deixe desmarcado, salve e confirme o pagamento posteriormente na ficha do cliente.
+- Comissão mensal: 10% a cada período pago. Semestral: 15% sobre 6 meses, integral no mês de confirmação. Anual: 20% sobre 12 meses, integral no mês de confirmação.
+- Tela de comissões simplificada para consultar registros e previsões mensais; vendedores veem suas próprias comissões.
+- Troca de senha opcional permanece.
 
-Você **não precisa** criar `DARKSALES_DEMO_MODE` nesta versão.
+## Sem banco externo na Vercel
 
-Acesso inicial: usuário `geral`, senha provisória `2026` (trocar no primeiro acesso). O site fica aberto na página de login; somente pessoas autorizadas acessam o painel.
+O código continua iniciando sem `DATABASE_URL` usando um SQLite **temporário em /tmp**. Isso serve só para testar telas. **Cadastros, senhas, comissões e fotos podem desaparecer e não são compartilhados consistentemente entre instâncias.** Para dados de verdade é necessário configurar PostgreSQL (`DATABASE_URL`). Não há migração automática de testes. A chave `DARKSALES_SECRET_KEY` deve estar configurada e permanecer privada. Não use dados reais de clientes enquanto o banco não for persistente.
 
-## Quando quiser salvar dados de verdade
+## Limites da verificação
 
-Adicione um banco PostgreSQL e configure `DATABASE_URL` nas variáveis de ambiente da Vercel, depois faça Redeploy. O mesmo sistema utiliza PostgreSQL, sem trocar interface ou outras funcionalidades. **Registros do SQLite temporário não são migrados automaticamente.**
-
-## Executar no computador
-
-Requer Python 3.11+. Instale as dependências com `pip install -r requirements.txt`, execute `python app.py` e abra `http://127.0.0.1:5000`. Fora da Vercel, sem PostgreSQL, o SQLite fica em `instance/darksales.db` e persiste localmente.
-
-## Regras das comissões
-
-- Mensal: 10% sobre cada mensalidade paga, no respectivo mês.
-- Semestral: 15% sobre seis mensalidades, integralmente no mês do pagamento inicial.
-- Anual: 20% sobre doze mensalidades, integralmente no mês do pagamento inicial.
-
-Pagamentos são registrados manualmente. O projeto não processa cobranças automaticamente.
-
-
-## Atualização: troca de senha opcional
-
-Nenhum usuário é obrigado a alterar a senha ao entrar. A tela Meu perfil permite atualizar
-apenas o nome, deixando os campos de senha em branco. O Geral pode redefinir senhas
-sem a senha anterior, e os vendedores podem trocá-las quando desejarem.
-
-Todos os itens do menu possuem rotas: Visão geral, Clientes, Para entrar, Trial,
-Assinantes ativos, Comissões, Vendedores (Geral), Meu perfil e Sair.
-
-**Limitação da Vercel sem banco:** quando DATABASE_URL não está definida, os registros
-são guardados temporariamente em /tmp e podem sumir a qualquer momento entre requisições
-ou implantações. O funcionamento confiável de cadastros, perfis e comissões compartilhados
-requer PostgreSQL; publicação sem banco serve somente para testar navegação.
+Foi verificada a sintaxe Python, a estrutura HTML e a integridade do ZIP. A execução completa no servidor Flask/Vercel precisa ser validada após o deploy.

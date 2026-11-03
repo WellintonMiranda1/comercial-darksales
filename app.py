@@ -127,6 +127,12 @@ def add_months(iso, count):
     return date(year,month,min(d.day,calendar.monthrange(year,month)[1])).isoformat()
 
 
+def contract_end(iso, cycle):
+    if cycle == 'monthly':
+        return (date.fromisoformat(iso) + timedelta(days=30)).isoformat()
+    return add_months(iso, CYCLES[cycle][1])
+
+
 def shift_month(iso, count):
     return add_months(iso,count)
 
@@ -239,12 +245,37 @@ def client_form_data(existing=None):
         if not c.execute('SELECT 1 FROM users WHERE id=? AND active=1',(seller_id,)).fetchone():raise ValueError('Vendedor inválido.')
     vals=[name,request.form.get('company','').strip(),request.form.get('phone','').strip(),request.form.get('email','').strip(),seller_id,
           status,tier,cycle,cents_from_form(request.form.get('monthly_price','0'))]
-    for field in ('start_date','due_date','trial_end','call_date'):
-        v=request.form.get(field,'').strip()
-        if v:date.fromisoformat(v)
-        vals.append(v or None)
+    start_date=request.form.get('start_date','').strip()
+    trial_end=request.form.get('trial_end','').strip() if status=='trial' else ''
+    call_date=request.form.get('call_date','').strip()
+    for v in (start_date,trial_end,call_date):
+        if v: date.fromisoformat(v)
+    # Vencimento é calculado no servidor, nunca depende do campo digitado.
+    if status in ('active','late') and not start_date:
+        start_date = today()
+    due_date=contract_end(start_date,cycle) if start_date and status in ('active','late','cancelled') else None
+    if (existing and due_date and existing['start_date']==start_date
+            and existing['cycle']==cycle and existing['due_date']):
+        # Preserva o vencimento após renovação ao editar outras informações.
+        due_date=existing['due_date']
+    vals.extend([start_date or None,due_date,trial_end or None,call_date or None])
     vals.append(request.form.get('notes','').strip())
     return vals
+
+
+def record_first_payment(c, client_id, seller_id, cycle, monthly_cents, period_start, paid_on):
+    # One commission per paid contract period, avoiding duplicates.
+    if monthly_cents <= 0:
+        return False
+    count, rate=CYCLES[cycle][1],CYCLES[cycle][2]
+    end=contract_end(period_start,cycle)
+    existing=c.execute('SELECT id FROM payments WHERE client_id=? AND period_start=? AND period_end=?',
+                       (client_id,period_start,end)).fetchone()
+    if existing: return False
+    c.execute('''INSERT INTO payments(client_id,seller_id,paid_on,amount_cents,period_start,period_end,commission_cents,commission_rate)
+                 VALUES (?,?,?,?,?,?,?,?)''',
+              (client_id,seller_id,paid_on,monthly_cents*count,period_start,end,round(monthly_cents*count*rate),round(rate*100)))
+    return True
 
 
 @app.route('/clients/new',methods=['GET','POST'])
@@ -252,9 +283,20 @@ def new_client():
     if request.method=='POST':
         try:
             vals=client_form_data()
-            with db() as c:c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
-            flash('Cliente cadastrado.','success');return redirect(url_for('clients'))
+            with db() as c:
+                # Não marcar dinheiro como recebido sem a confirmação explícita.
+                if DATABASE_URL:
+                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''', vals)
+                    client_id=inserted.fetchone()['id']
+                else:
+                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
+                    client_id=inserted.lastrowid
+                if vals[5]=='active' and request.form.get('payment_confirmed')=='on':
+                    record_first_payment(c,client_id,vals[4],vals[7],vals[8],vals[9] or today(),today())
+            flash('Cliente cadastrado.' + (' Comissão registrada.' if vals[5]=='active' and request.form.get('payment_confirmed')=='on' else ''),'success')
+            return redirect(url_for('client_detail',client_id=client_id))
         except (ValueError,TypeError) as e:flash(str(e),'error')
     return render_template('client_form.html',client=None,sellers=seller_choices())
 
@@ -265,7 +307,10 @@ def client_detail(client_id):
     if request.method=='POST':
         try:
             vals=client_form_data(row)
-            with db() as c:c.execute('''UPDATE clients SET name=?,company=?,phone=?,email=?,seller_id=?,status=?,tier=?,cycle=?,monthly_price_cents=?,start_date=?,due_date=?,trial_end=?,call_date=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',vals+[client_id])
+            with db() as c:
+                c.execute('''UPDATE clients SET name=?,company=?,phone=?,email=?,seller_id=?,status=?,tier=?,cycle=?,monthly_price_cents=?,start_date=?,due_date=?,trial_end=?,call_date=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',vals+[client_id])
+                if vals[5]=='active' and request.form.get('payment_confirmed')=='on':
+                    record_first_payment(c,client_id,vals[4],vals[7],vals[8],vals[9] or today(),today())
             flash('Cliente atualizado.','success');return redirect(url_for('client_detail',client_id=client_id))
         except (ValueError,TypeError) as e:flash(str(e),'error')
     with db() as c:payment_rows=c.execute('SELECT * FROM payments WHERE client_id=? ORDER BY paid_on DESC,id DESC',(client_id,)).fetchall()
@@ -279,9 +324,11 @@ def payment_add(client_id):
         if client['cycle'] not in CYCLES:raise ValueError('Tipo de contrato inválido.')
         months=CYCLES[client['cycle']][1];pct=CYCLES[client['cycle']][2]
         paid_on=request.form.get('paid_on') or today();date.fromisoformat(paid_on)
-        period_start=request.form.get('period_start') or client['due_date'] or client['start_date'] or paid_on
+        with db() as c:
+            latest=c.execute('SELECT period_end FROM payments WHERE client_id=? ORDER BY period_end DESC LIMIT 1',(client_id,)).fetchone()
+        period_start=request.form.get('period_start') or (latest['period_end'] if latest else None) or client['start_date'] or paid_on
         date.fromisoformat(period_start)
-        end=add_months(period_start,months)
+        end=contract_end(period_start,client['cycle'])
         total=client['monthly_price_cents']*months
         if total<=0:raise ValueError('Informe um valor mensal maior que zero.')
         commission=round(total*pct)
@@ -297,28 +344,47 @@ def payment_add(client_id):
 
 @app.route('/commissions')
 def commissions():
-    u=get_user();mon=request.args.get('month') or date.today().strftime('%Y-%m')
-    try:date.fromisoformat(mon+'-01')
-    except ValueError:mon=date.today().strftime('%Y-%m')
+    u=get_user()
+    mon=request.args.get('month') or date.today().strftime('%Y-%m')
+    try:
+        date.fromisoformat(mon+'-01')
+    except ValueError:
+        mon=date.today().strftime('%Y-%m')
     sid=request.args.get('seller','') if u['role']=='admin' else str(u['id'])
     is_forecast=request.args.get('forecast')=='1'
-    sql='''SELECT p.*,cl.name client_name,cl.tier,cl.cycle,cl.monthly_price_cents,u.name seller_name
-           FROM payments p JOIN clients cl ON cl.id=p.client_id JOIN users u ON u.id=p.seller_id WHERE substr(p.paid_on,1,7)=?'''
-    params=[mon]
-    if sid.isdigit():sql+=' AND p.seller_id=?';params.append(int(sid))
+    sql=('SELECT p.*, cl.name AS client_name, cl.tier AS tier, '
+         'cl.cycle AS cycle, cl.monthly_price_cents AS monthly_price_cents, '
+         'u.name AS seller_name FROM payments p '
+         'JOIN clients cl ON cl.id=p.client_id '
+         'JOIN users u ON u.id=p.seller_id WHERE p.paid_on>=? AND p.paid_on<?')
+    month_start=mon+'-01'
+    month_end=add_months(month_start,1)
+    params=[month_start,month_end]
+    if sid.isdigit():
+        sql+=' AND p.seller_id=?'
+        params.append(int(sid))
     sql+=' ORDER BY p.paid_on DESC,p.id DESC'
-    with db() as c:rows=c.execute(sql,params).fetchall()
+    with db() as c:
+        rows=c.execute(sql,params).fetchall()
     total=sum(x['commission_cents'] for x in rows)
     pending=sum(x['commission_cents'] for x in rows if x['commission_status']=='pending')
     received=total-pending
     forecast_rows=[]
     if is_forecast:
-        future_sql="SELECT cl.*,u.name seller_name FROM clients cl JOIN users u ON u.id=cl.seller_id WHERE cl.status='active' AND cl.cycle='monthly'"
+        future_sql=("SELECT cl.*,u.name AS seller_name FROM clients cl "
+                    "JOIN users u ON u.id=cl.seller_id "
+                    "WHERE cl.status='active' AND cl.cycle='monthly'")
         future_args=[]
-        if sid.isdigit(): future_sql+=' AND cl.seller_id=?';future_args.append(int(sid))
-        with db() as c: forecast_rows=c.execute(future_sql,future_args).fetchall()
+        if sid.isdigit():
+            future_sql+=' AND cl.seller_id=?'
+            future_args.append(int(sid))
+        with db() as c:
+            forecast_rows=c.execute(future_sql,future_args).fetchall()
     forecast_total=sum(round(r['monthly_price_cents']*.10) for r in forecast_rows)
-    return render_template('commissions.html',records=rows,mon=mon,total=total,pending=pending,received=received,sellers=seller_choices(),seller=sid,forecast=is_forecast,forecast_rows=forecast_rows,forecast_total=forecast_total)
+    return render_template('commissions.html', records=rows,mon=mon,total=total,
+                           pending=pending,received=received,sellers=seller_choices(),
+                           seller=sid,forecast=is_forecast,forecast_rows=forecast_rows,
+                           forecast_total=forecast_total)
 
 
 @app.post('/commissions/<int:payment_id>/toggle')
