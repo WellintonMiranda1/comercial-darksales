@@ -103,7 +103,7 @@ def init_db():
         if DATABASE_URL:
             c.execute('CREATE TABLE IF NOT EXISTS avatar_images (filename TEXT PRIMARY KEY, content BYTEA NOT NULL)')
         if not c.execute('SELECT 1 FROM users WHERE username=?',('geral',)).fetchone():
-            c.execute('INSERT INTO users(name,username,password_hash,role,must_change) VALUES (?,?,?,?,1)',
+            c.execute('INSERT INTO users(name,username,password_hash,role,must_change) VALUES (?,?,?,?,0)',
                 ('Geral','geral',generate_password_hash('2026'),'admin'))
 
 
@@ -148,7 +148,7 @@ def security_check():
     if request.endpoint not in ('login','static'):
         u=get_user()
         if not u:return redirect(url_for('login'))
-        if u['must_change'] and request.endpoint not in ('profile','logout','avatar'):return redirect(url_for('profile'))
+        # A troca de senha é opcional para todos os perfis.
 
 
 @app.context_processor
@@ -179,7 +179,7 @@ def login():
         with db() as c: user=c.execute('SELECT * FROM users WHERE username=? AND active=1',(username,)).fetchone()
         if user and check_password_hash(user['password_hash'],request.form.get('password','')):
             session.clear();session['uid']=user['id'];session['csrf']=secrets.token_urlsafe(32)
-            return redirect(url_for('profile' if user['must_change'] else 'dashboard'))
+            return redirect(url_for('dashboard'))
         flash('Usuário ou senha inválidos.','error')
     return render_template('login.html')
 
@@ -210,7 +210,7 @@ def dashboard():
     # Preview next month's recurring monthly commissions; other plans enter only when a new payment is recorded.
     forecast=sum(round(x['monthly_price_cents']*.10) for x in clients if x['status']=='active' and x['cycle']=='monthly')
     return render_template('dashboard.html',counts=counts,clients=clients,due=due,late=late,mrr=mrr,
-                           current=current,forecast=forecast,payments=payments)
+                           current=current,forecast=forecast,payments=payments,next_month=next_first.strftime('%Y-%m'))
 
 
 @app.route('/clients')
@@ -343,8 +343,8 @@ def users():
             flash('Informe nome, usuário, perfil válido e senha com pelo menos 8 caracteres.','error')
         else:
             try:
-                with db() as c:c.execute('INSERT INTO users(name,username,password_hash,role,must_change) VALUES(?,?,?,?,1)',(name,username,generate_password_hash(password),role))
-                flash('Acesso criado. O usuário deverá trocar a senha no primeiro login.','success');return redirect(url_for('users'))
+                with db() as c:c.execute('INSERT INTO users(name,username,password_hash,role,must_change) VALUES(?,?,?,?,0)',(name,username,generate_password_hash(password),role))
+                flash('Acesso criado. A senha poderá ser alterada quando o usuário quiser.','success');return redirect(url_for('users'))
             except (sqlite3.IntegrityError, psycopg.IntegrityError):flash('Este nome de usuário já existe.','error')
     with db() as c:rows=c.execute('SELECT * FROM users ORDER BY id').fetchall()
     return render_template('users.html',records=rows)
@@ -362,8 +362,8 @@ def user_update(user_id):
             pw=request.form.get('new_password','')
             if len(pw)<8:flash('A nova senha precisa ter pelo menos 8 caracteres.','error')
             else:
-                c.execute('UPDATE users SET password_hash=?,must_change=1 WHERE id=?',(generate_password_hash(pw),user_id))
-                flash('Senha redefinida; será exigida troca no próximo acesso.','success')
+                c.execute('UPDATE users SET password_hash=?,must_change=0 WHERE id=?',(generate_password_hash(pw),user_id))
+                flash('Senha redefinida. O usuário pode continuar utilizando a senha definida.','success')
         elif action=='toggle':
             if uid==user_id:flash('Não é possível desativar sua própria conta.','error')
             else:
@@ -383,14 +383,13 @@ def profile():
     if request.method=='POST':
         name=request.form.get('name','').strip();current=request.form.get('current_password','');new=request.form.get('new_password','')
         if not name:flash('Informe o nome.','error')
-        elif u['must_change'] and not new:flash('Você precisa definir uma nova senha.','error')
         elif new and (not check_password_hash(u['password_hash'],current) or len(new)<8):
             flash('Senha atual incorreta ou nova senha com menos de 8 caracteres.','error')
         else:
             with db() as c:
                 c.execute('UPDATE users SET name=? WHERE id=?',(name,u['id']))
                 if new:c.execute('UPDATE users SET password_hash=?,must_change=0 WHERE id=?',(generate_password_hash(new),u['id']))
-            flash('Perfil atualizado.','success');return redirect(url_for('dashboard' if new and u['must_change'] else 'profile'))
+            flash('Perfil atualizado.','success');return redirect(url_for('profile'))
     return render_template('profile.html')
 
 

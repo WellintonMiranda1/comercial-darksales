@@ -40,3 +40,18 @@ Requer Python 3.11+. Instale as dependências com `pip install -r requirements.t
 - Anual: 20% sobre doze mensalidades, integralmente no mês do pagamento inicial.
 
 Pagamentos são registrados manualmente. O projeto não processa cobranças automaticamente.
+
+
+## Atualização: troca de senha opcional
+
+Nenhum usuário é obrigado a alterar a senha ao entrar. A tela Meu perfil permite atualizar
+apenas o nome, deixando os campos de senha em branco. O Geral pode redefinir senhas
+sem a senha anterior, e os vendedores podem trocá-las quando desejarem.
+
+Todos os itens do menu possuem rotas: Visão geral, Clientes, Para entrar, Trial,
+Assinantes ativos, Comissões, Vendedores (Geral), Meu perfil e Sair.
+
+**Limitação da Vercel sem banco:** quando DATABASE_URL não está definida, os registros
+são guardados temporariamente em /tmp e podem sumir a qualquer momento entre requisições
+ou implantações. O funcionamento confiável de cadastros, perfis e comissões compartilhados
+requer PostgreSQL; publicação sem banco serve somente para testar navegação.
