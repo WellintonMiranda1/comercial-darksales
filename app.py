@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from flask import Flask, render_template, request, redirect, url_for, session, flash, abort, Response, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from business_rules import commission_amount, contract_total, projected_renewal, is_paid_active
 
 BASE = Path(__file__).resolve().parent
 app = Flask(__name__, instance_path=str(BASE / 'instance'))
@@ -90,7 +91,8 @@ def init_db():
           period_end TEXT NOT NULL, commission_cents INTEGER NOT NULL,
           commission_rate INTEGER NOT NULL,
           commission_status TEXT NOT NULL DEFAULT 'pending',
-          commission_paid_on TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          commission_paid_on TEXT, tier_snapshot TEXT, cycle_snapshot TEXT,
+          monthly_price_snapshot_cents INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(client_id,period_start,period_end)
         );
         CREATE INDEX IF NOT EXISTS idx_clients_seller ON clients(seller_id);
@@ -102,6 +104,29 @@ def init_db():
         c.executescript(schema)
         if DATABASE_URL:
             c.execute('CREATE TABLE IF NOT EXISTS avatar_images (filename TEXT PRIMARY KEY, content BYTEA NOT NULL)')
+        # Migração não destrutiva: preservar histórico financeiro e registrar
+        # as condições da venda no próprio pagamento, sem depender de futuras edições.
+        for column, coltype in (
+            ('tier_snapshot', 'TEXT'),
+            ('cycle_snapshot', 'TEXT'),
+            ('monthly_price_snapshot_cents', 'INTEGER'),
+        ):
+            if DATABASE_URL:
+                c.execute(f'ALTER TABLE payments ADD COLUMN IF NOT EXISTS {column} {coltype}')
+            else:
+                columns = {row['name'] for row in c.execute('PRAGMA table_info(payments)').fetchall()}
+                if column not in columns:
+                    c.execute(f'ALTER TABLE payments ADD COLUMN {column} {coltype}')
+        c.execute("""UPDATE payments SET
+            tier_snapshot = COALESCE(tier_snapshot, (SELECT tier FROM clients WHERE clients.id=payments.client_id)),
+            cycle_snapshot = COALESCE(cycle_snapshot, (SELECT cycle FROM clients WHERE clients.id=payments.client_id)),
+            monthly_price_snapshot_cents = COALESCE(monthly_price_snapshot_cents,
+                (SELECT monthly_price_cents FROM clients WHERE clients.id=payments.client_id))
+            WHERE tier_snapshot IS NULL OR cycle_snapshot IS NULL OR monthly_price_snapshot_cents IS NULL""")
+        # Cadastros antigos marcados como ativos sem qualquer pagamento não são assinantes.
+        c.execute("""UPDATE clients SET status='lead', due_date=NULL
+            WHERE status IN ('active','late')
+              AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.client_id=clients.id)""")
         if not c.execute('SELECT 1 FROM users WHERE username=?',('geral',)).fetchone():
             c.execute('INSERT INTO users(name,username,password_hash,role,must_change) VALUES (?,?,?,?,0)',
                 ('Geral','geral',generate_password_hash('2026'),'admin'))
@@ -137,18 +162,21 @@ def shift_month(iso, count):
     return add_months(iso,count)
 
 
-def next_monthly_payment_in_window(client, start, end):
-    """Predict monthly due dates every 30 days without altering payments."""
-    if client['status']!='active' or client['cycle']!='monthly' or not client['due_date']:
-        return False
-    due=date.fromisoformat(client['due_date'])
-    first=date.fromisoformat(start)
-    cutoff=date.fromisoformat(end)
-    if due < first:
-        step=(first-due).days//30
-        due+=timedelta(days=step*30)
-        while due<first:due+=timedelta(days=30)
-    return first<=due<cutoff
+def commission_forecast_row(client, month_start, month_end):
+    """Return forecast (never a confirmed commission) for the next unpaid cycle.
+
+    Renewals are predicted by the last actual paid period; no projection becomes
+    a real commission until a payment is recorded.
+    """
+    if client['status'] != 'active' or client['cycle'] not in CYCLES or not client['due_date']:
+        return None
+    due = projected_renewal(client['due_date'], client['cycle'], month_start, month_end)
+    if not due:
+        return None
+    months, rate = CYCLES[client['cycle']][1:]
+    return {'client': client, 'due_date': due,
+            'amount': commission_amount(client['monthly_price_cents'], months, rate)}
+
 
 
 def today():return date.today().isoformat()
@@ -239,9 +267,9 @@ def dashboard():
     def amount_for(start,end):
         return sum(x['commission_cents'] for x in payments if start<=date.fromisoformat(x['paid_on'])<end)
     current=amount_for(first,next_first)
-    # Preview next month's recurring monthly commissions; other plans enter only when a new payment is recorded.
-    forecast=sum(round(x['monthly_price_cents']*.10) for x in clients
-                 if next_monthly_payment_in_window(x,next_first.isoformat(),following.isoformat()))
+    # Previsão baseada em renovação FUTURA e sujeita à confirmação do pagamento.
+    forecast=sum(item['amount'] for x in clients
+                 if (item := commission_forecast_row(x,next_first.isoformat(),following.isoformat())))
     return render_template('dashboard.html',counts=counts,clients=clients,due=due,late=late,mrr=mrr,
                            current=current,forecast=forecast,payments=payments,next_month=next_first.strftime('%Y-%m'))
 
@@ -280,16 +308,25 @@ def client_form_data(existing=None):
     # Vencimento é calculado no servidor, nunca depende do campo digitado.
     if status in ('active','late') and not start_date:
         start_date = today()
+    # Status ativo nunca é aceito sem pagamento registrado/confirmado.
+    has_payment = False
+    if existing:
+        with db() as c:
+            has_payment = bool(c.execute('SELECT 1 FROM payments WHERE client_id=? LIMIT 1',(existing['id'],)).fetchone())
+    first_payment_now = existing is None and status=='active' and request.form.get('payment_confirmed')=='on'
+    if status in ('active','late') and not (has_payment or first_payment_now):
+        status='lead'
+        vals[5]=status
     due_date=contract_end(start_date,cycle) if start_date and status in ('active','late','cancelled') else None
-    if existing and existing['due_date'] and existing['start_date']==start_date and existing['cycle']==cycle:
-        # Nunca recuar o vencimento após um pagamento/renovação registrado.
+    if existing and has_payment and existing['due_date'] and existing['start_date']==start_date and existing['cycle']==cycle:
+        # Preservar data da última renovação paga ao editar cadastro.
         due_date=existing['due_date']
     vals.extend([start_date or None,due_date,trial_end or None,call_date or None])
     vals.append(request.form.get('notes','').strip())
     return vals
 
 
-def record_first_payment(c, client_id, seller_id, cycle, monthly_cents, period_start, paid_on):
+def record_first_payment(c, client_id, seller_id, tier, cycle, monthly_cents, period_start, paid_on):
     # One commission per paid contract period, avoiding duplicates.
     if monthly_cents <= 0:
         return False
@@ -298,9 +335,11 @@ def record_first_payment(c, client_id, seller_id, cycle, monthly_cents, period_s
     existing=c.execute('SELECT id FROM payments WHERE client_id=? AND period_start=? AND period_end=?',
                        (client_id,period_start,end)).fetchone()
     if existing: return False
-    c.execute('''INSERT INTO payments(client_id,seller_id,paid_on,amount_cents,period_start,period_end,commission_cents,commission_rate)
-                 VALUES (?,?,?,?,?,?,?,?)''',
-              (client_id,seller_id,paid_on,monthly_cents*count,period_start,end,round(monthly_cents*count*rate),round(rate*100)))
+    c.execute('''INSERT INTO payments(client_id,seller_id,paid_on,amount_cents,period_start,period_end,
+                 commission_cents,commission_rate,tier_snapshot,cycle_snapshot,monthly_price_snapshot_cents)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+              (client_id,seller_id,paid_on,contract_total(monthly_cents,count),period_start,end,
+               commission_amount(monthly_cents,count,rate),round(rate*100),tier,cycle,monthly_cents))
     return True
 
 
@@ -321,7 +360,7 @@ def new_client():
                     client_id=inserted.lastrowid
                 if vals[5]=='active' and request.form.get('payment_confirmed')=='on':
                     if vals[8] <= 0: raise ValueError('Informe um valor mensal antes de confirmar o pagamento.')
-                    record_first_payment(c,client_id,vals[4],vals[7],vals[8],vals[9] or today(),today())
+                    record_first_payment(c,client_id,vals[4],vals[6],vals[7],vals[8],vals[9] or today(),today())
             flash('Cliente cadastrado.' + (' Comissão registrada.' if vals[5]=='active' and request.form.get('payment_confirmed')=='on' else ''),'success')
             return redirect(url_for('client_detail',client_id=client_id))
         except (ValueError,TypeError) as e:flash(str(e),'error')
@@ -348,12 +387,16 @@ def client_detail(client_id):
 def payment_add(client_id):
     client=own_client(client_id)
     try:
-        if client['status'] not in ('active','late'):
-            raise ValueError('Marque o cliente como ativo antes de registrar um pagamento.')
+        if client['status'] in ('cancelled','lost'):
+            raise ValueError('Reabra a negociação antes de confirmar um pagamento.')
         if client['cycle'] not in CYCLES:
             raise ValueError('Tipo de contrato inválido.')
         paid_on=request.form.get('paid_on') or today()
         received=date.fromisoformat(paid_on)
+        if received > date.today():
+            raise ValueError('Não é possível confirmar pagamento com data futura.')
+        if client['monthly_price_cents'] <= 0:
+            raise ValueError('Informe um valor mensal maior que zero antes de confirmar pagamento.')
         with db() as c:
             # O servidor controla a competência. Não aceitar início digitado pelo navegador.
             last=c.execute('''SELECT * FROM payments WHERE client_id=?
@@ -367,12 +410,12 @@ def payment_add(client_id):
                 period_start=last['period_end']
             else:
                 period_start=client['start_date'] or paid_on
-            created=record_first_payment(c,client_id,client['seller_id'],client['cycle'],
+            created=record_first_payment(c,client_id,client['seller_id'],client['tier'],client['cycle'],
                                          client['monthly_price_cents'],period_start,paid_on)
             if not created:
                 raise ValueError('Este período já possui pagamento. Nenhuma nova comissão foi gerada.')
             end=contract_end(period_start,client['cycle'])
-            c.execute("UPDATE clients SET status='active',start_date=COALESCE(start_date,?),due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            c.execute("UPDATE clients SET status='active',trial_end=NULL,start_date=COALESCE(start_date,?),due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                       (period_start,end,client_id))
         flash('Pagamento registrado uma única vez e comissão gerada.','success')
     except (sqlite3.IntegrityError, psycopg.IntegrityError):
@@ -394,8 +437,11 @@ def payment_delete(client_id,payment_id):
         c.execute('DELETE FROM payments WHERE id=? AND client_id=?',(payment_id,client_id))
         last=c.execute('SELECT period_end FROM payments WHERE client_id=? ORDER BY period_end DESC,id DESC LIMIT 1',(client_id,)).fetchone()
         client=c.execute('SELECT start_date,cycle FROM clients WHERE id=?',(client_id,)).fetchone()
-        due=last['period_end'] if last else (contract_end(client['start_date'],client['cycle']) if client['start_date'] else None)
-        c.execute('UPDATE clients SET due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(due,client_id))
+        due=last['period_end'] if last else None
+        if last:
+            c.execute('UPDATE clients SET due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(due,client_id))
+        else:
+            c.execute("UPDATE clients SET status='lead',due_date=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",(client_id,))
     flash('Lançamento excluído e vencimento recalculado. Confira o histórico.','success')
     return redirect(url_for('client_detail',client_id=client_id))
 
@@ -410,8 +456,8 @@ def commissions():
         mon=date.today().strftime('%Y-%m')
     sid=request.args.get('seller','') if u['role']=='admin' else str(u['id'])
     is_forecast=request.args.get('forecast')=='1'
-    sql=('SELECT p.*, cl.name AS client_name, cl.tier AS tier, '
-         'cl.cycle AS cycle, cl.monthly_price_cents AS monthly_price_cents, '
+    sql=('SELECT p.*, cl.name AS client_name, p.tier_snapshot AS tier, '
+         'p.cycle_snapshot AS cycle, p.monthly_price_snapshot_cents AS monthly_price_cents, '
          'u.name AS seller_name FROM payments p '
          'JOIN clients cl ON cl.id=p.client_id '
          'JOIN users u ON u.id=p.seller_id WHERE p.paid_on>=? AND p.paid_on<?')
@@ -430,16 +476,23 @@ def commissions():
     forecast_rows=[]
     if is_forecast:
         future_sql=("SELECT cl.*,u.name AS seller_name FROM clients cl "
-                    "JOIN users u ON u.id=cl.seller_id "
-                    "WHERE cl.status='active' AND cl.cycle='monthly'")
+                    "JOIN users u ON u.id=cl.seller_id WHERE cl.status='active'")
         future_args=[]
         if sid.isdigit():
             future_sql+=' AND cl.seller_id=?'
             future_args.append(int(sid))
         with db() as c:
-            forecast_rows=[r for r in c.execute(future_sql,future_args).fetchall()
-                           if next_monthly_payment_in_window(r,month_start,month_end)]
-    forecast_total=sum(round(r['monthly_price_cents']*.10) for r in forecast_rows)
+            clients_due=c.execute(future_sql,future_args).fetchall()
+            # Previsão não duplica pagamentos que já foram registrados no período.
+            confirmed={(p['client_id'],p['period_start']) for p in c.execute(
+                'SELECT client_id,period_start FROM payments WHERE paid_on>=? AND paid_on<?',
+                (month_start,month_end)).fetchall()}
+        forecast_rows=[]
+        for client in clients_due:
+            item=commission_forecast_row(client,month_start,month_end)
+            if item and (client['id'],item['due_date']) not in confirmed:
+                forecast_rows.append(item)
+    forecast_total=sum(item['amount'] for item in forecast_rows)
     return render_template('commissions.html', records=rows,mon=mon,total=total,
                            pending=pending,received=received,sellers=seller_choices(),
                            seller=sid,forecast=is_forecast,forecast_rows=forecast_rows,
