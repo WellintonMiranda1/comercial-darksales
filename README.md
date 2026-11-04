@@ -39,3 +39,10 @@ Atualização exclusivamente visual: elevação, leve efeito 3D nos cards, sombr
 - **Clientes:** abra o cadastro e use **Excluir cliente definitivamente**, no final do formulário. Exclui o cliente e **todos** os pagamentos e comissões ligados a ele, na mesma transação.
 - As duas ações são reservadas ao usuário **Geral (administrador)** e exigem confirmação no navegador. Não podem ser desfeitas.
 - Os totais de clientes, faturamento e comissões são recalculados com base nos registros restantes.
+
+
+## Cancelamento por vendedor — atualização
+- Na ficha de cada cliente, o botão **Cancelar assinatura** fica disponível ao vendedor responsável e ao administrador Geral.
+- A confirmação muda a etapa do cliente para **Cancelado**; o cadastro e os pagamentos/comissões históricos permanecem intactos.
+- Clientes cancelados deixam de entrar nas previsões de renovações futuras.
+- Excluir um cliente ou pagamento continua restrito ao Geral.

@@ -425,6 +425,28 @@ def payment_add(client_id):
     return redirect(url_for('client_detail',client_id=client_id))
 
 
+@app.post('/clients/<int:client_id>/cancel')
+def client_cancel(client_id):
+    """Cancel an owned client's subscription, preserving payments and commissions."""
+    client = own_client(client_id)  # Admin: any client; seller: their own only.
+    if request.form.get('confirm_cancel') != 'CANCELAR':
+        abort(400, 'Confirmação necessária para cancelar a assinatura.')
+    if client['status'] == 'cancelled':
+        flash('Esta assinatura já está cancelada.', 'error')
+    else:
+        with db() as c:
+            # Recheck ownership in the update so reassignment cannot authorize
+            # cancelling a client that has moved to another seller.
+            if get_user()['role'] == 'admin':
+                cur = c.execute("UPDATE clients SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status!='cancelled'", (client_id,))
+            else:
+                cur = c.execute("UPDATE clients SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND seller_id=? AND status!='cancelled'", (client_id,get_user()['id']))
+            if not cur.rowcount:
+                abort(403, 'Não foi possível cancelar esta assinatura.')
+        flash('Assinatura cancelada. Histórico de pagamentos e comissões preservado.', 'success')
+    return redirect(url_for('client_detail', client_id=client_id))
+
+
 @app.post('/clients/<int:client_id>/delete')
 @admin_only
 def client_delete(client_id):
