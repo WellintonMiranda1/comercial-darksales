@@ -425,6 +425,20 @@ def payment_add(client_id):
     return redirect(url_for('client_detail',client_id=client_id))
 
 
+@app.post('/clients/<int:client_id>/delete')
+@admin_only
+def client_delete(client_id):
+    """Excluir definitivamente cadastro e lançamentos vinculados, em uma transação."""
+    client = own_client(client_id)
+    if request.form.get('confirm_delete') != 'EXCLUIR':
+        abort(400, 'Confirmação necessária para excluir o cadastro.')
+    with db() as c:
+        c.execute('DELETE FROM payments WHERE client_id=?', (client_id,))
+        c.execute('DELETE FROM clients WHERE id=?', (client_id,))
+    flash(f'Cliente {client["name"]} e seus pagamentos/comissões foram excluídos.', 'success')
+    return redirect(url_for('clients'))
+
+
 @app.post('/clients/<int:client_id>/payments/<int:payment_id>/delete')
 @admin_only
 def payment_delete(client_id,payment_id):

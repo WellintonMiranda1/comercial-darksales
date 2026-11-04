@@ -41,3 +41,10 @@ input,textarea,select{border-radius:11px;border-color:#dde3ef;transition:border-
 @media(max-width:1050px){.topbar{padding:0 24px}}
 @media(max-width:650px){.topbar{height:47px;padding:0 14px}.page{padding:22px 12px 40px}.stat{min-height:143px;padding:16px;border-radius:15px}.stat strong{font-size:31px}.stat-grid{gap:10px}.panel{padding:18px;border-radius:15px}.heading h1{font-size:29px}.sidebar nav a:hover{transform:none}.stat:hover,.commission-tile:hover,.user-card:hover{transform:none}.commission-tile{padding:18px}.commission-tile b{font-size:23px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.page{animation:none!important}*,*:before,*:after{transition:none!important;animation:none!important;transform:none!important}}
+
+/* Exclusão de cadastros: ação destrutiva sempre destacada */
+.danger-zone{margin-top:28px;padding:20px;border:1px solid #f1c5c5;border-radius:16px;background:#fff8f8}
+.danger-zone h3{margin:0 0 8px;font-size:16px;color:#921b31}
+.danger-zone p{margin:0 0 15px;color:#80515a;font-size:13px;line-height:1.55}
+.btn.danger{background:#ad2842;color:#fff;border:1px solid #ad2842}
+.btn.danger:hover{background:#911e34;box-shadow:0 8px 22px rgba(173,40,66,.2)}

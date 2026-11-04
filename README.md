@@ -31,3 +31,11 @@ A Vercel atualizará o deploy conectado ao GitHub. Mantenha `NEON_USA_DATABASE_U
 
 ## Versão visual premium — novembro de 2026
 Atualização exclusivamente visual: elevação, leve efeito 3D nos cards, sombras, gradientes, estados hover/foco e layout responsivo. Não modifica regras financeiras, tabelas ou configuração do Neon USA.
+
+
+## Excluir pagamentos e clientes
+
+- **Pagamentos:** abra o cadastro de um cliente e use **Excluir lançamento incorreto** no histórico de pagamentos. A comissão correspondente é excluída juntamente com o pagamento e o vencimento é recalculado.
+- **Clientes:** abra o cadastro e use **Excluir cliente definitivamente**, no final do formulário. Exclui o cliente e **todos** os pagamentos e comissões ligados a ele, na mesma transação.
+- As duas ações são reservadas ao usuário **Geral (administrador)** e exigem confirmação no navegador. Não podem ser desfeitas.
+- Os totais de clientes, faturamento e comissões são recalculados com base nos registros restantes.
