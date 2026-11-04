@@ -95,6 +95,21 @@ def init_db():
           monthly_price_snapshot_cents INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(client_id,period_start,period_end)
         );
+        CREATE TABLE IF NOT EXISTS payment_cancellations (
+          id INTEGER PRIMARY KEY,
+          client_id INTEGER NOT NULL REFERENCES clients(id),
+          original_payment_id INTEGER NOT NULL,
+          seller_id INTEGER NOT NULL REFERENCES users(id),
+          cancelled_by INTEGER NOT NULL REFERENCES users(id),
+          cancelled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          reason TEXT NOT NULL,
+          paid_on TEXT NOT NULL, amount_cents INTEGER NOT NULL,
+          period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+          commission_cents INTEGER NOT NULL, commission_rate INTEGER NOT NULL,
+          commission_status TEXT NOT NULL, tier_snapshot TEXT,
+          cycle_snapshot TEXT, monthly_price_snapshot_cents INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_cancelled_client ON payment_cancellations(client_id);
         CREATE INDEX IF NOT EXISTS idx_clients_seller ON clients(seller_id);
         CREATE INDEX IF NOT EXISTS idx_clients_due ON clients(due_date);
         CREATE INDEX IF NOT EXISTS idx_payments_seller ON payments(seller_id);
@@ -277,13 +292,19 @@ def dashboard():
 @app.route('/clients')
 def clients():
     u=get_user(); status=request.args.get('status','all'); search=request.args.get('q','').strip()
+    sort=request.args.get('sort','newest')
+    sort_options={'newest':'cl.created_at DESC,cl.id DESC',
+                  'oldest':'cl.created_at ASC,cl.id ASC',
+                  'name_asc':'LOWER(cl.name) ASC,cl.id ASC',
+                  'name_desc':'LOWER(cl.name) DESC,cl.id DESC'}
+    if sort not in sort_options:sort='newest'
     sql='SELECT cl.*,u.name seller_name FROM clients cl JOIN users u ON u.id=cl.seller_id WHERE 1=1';args=[]
     if u['role']!='admin':sql+=' AND cl.seller_id=?';args.append(u['id'])
     if status in STATUSES:sql+=' AND cl.status=?';args.append(status)
     if search:sql+=' AND (cl.name LIKE ? OR cl.company LIKE ? OR cl.phone LIKE ?)';args.extend(['%'+search+'%']*3)
-    sql+=' ORDER BY cl.updated_at DESC,cl.id DESC'
+    sql+=' ORDER BY '+sort_options[sort]
     with db() as c: records=c.execute(sql,args).fetchall()
-    return render_template('clients.html',records=records,status=status,q=search)
+    return render_template('clients.html',records=records,status=status,q=search,sort=sort)
 
 
 def seller_choices():
@@ -379,8 +400,10 @@ def client_detail(client_id):
                 # Editar uma ficha nunca gera uma nova comissão.
             flash('Cliente atualizado.','success');return redirect(url_for('client_detail',client_id=client_id))
         except (ValueError,TypeError) as e:flash(str(e),'error')
-    with db() as c:payment_rows=c.execute('SELECT * FROM payments WHERE client_id=? ORDER BY paid_on DESC,id DESC',(client_id,)).fetchall()
-    return render_template('client_form.html',client=row,sellers=seller_choices(),payments=payment_rows)
+    with db() as c:
+        payment_rows=c.execute('SELECT * FROM payments WHERE client_id=? ORDER BY period_end DESC,id DESC',(client_id,)).fetchall()
+        cancelled_rows=c.execute('SELECT pc.*,u.name AS cancelled_by_name FROM payment_cancellations pc JOIN users u ON u.id=pc.cancelled_by WHERE pc.client_id=? ORDER BY pc.id DESC',(client_id,)).fetchall()
+    return render_template('client_form.html',client=row,sellers=seller_choices(),payments=payment_rows,cancelled_payments=cancelled_rows)
 
 
 @app.post('/clients/<int:client_id>/payment')
@@ -456,29 +479,64 @@ def client_delete(client_id):
         abort(400, 'Confirmação necessária para excluir o cadastro.')
     with db() as c:
         c.execute('DELETE FROM payments WHERE client_id=?', (client_id,))
+        c.execute('DELETE FROM payment_cancellations WHERE client_id=?', (client_id,))
         c.execute('DELETE FROM clients WHERE id=?', (client_id,))
     flash(f'Cliente {client["name"]} e seus pagamentos/comissões foram excluídos.', 'success')
     return redirect(url_for('clients'))
 
 
 @app.post('/clients/<int:client_id>/payments/<int:payment_id>/delete')
-@admin_only
 def payment_delete(client_id,payment_id):
-    own_client(client_id)
-    if request.form.get('confirm_delete')!='YES':
-        abort(400,'Confirmação necessária.')
+    '''Estorna o ÚLTIMO pagamento do cliente, com auditoria e sem apagar o cadastro.
+
+    Só o vendedor responsável ou Geral podem executar. Um repasse de comissão
+    já efetuado exige acerto pelo administrador para evitar ocultar valores pagos.
+    '''
+    client=own_client(client_id)
+    reason=request.form.get('reason','').strip()
+    if request.form.get('confirm_delete')!='ESTORNAR':
+        abort(400,'Confirme o estorno do pagamento.')
+    if len(reason)<5 or len(reason)>500:
+        flash('Informe o motivo do estorno (mínimo 5 e máximo 500 caracteres).','error')
+        return redirect(url_for('client_detail',client_id=client_id))
+    actor=get_user()
     with db() as c:
-        p=c.execute('SELECT * FROM payments WHERE id=? AND client_id=?',(payment_id,client_id)).fetchone()
-        if not p: abort(404)
+        # Lock the client row on PostgreSQL to serialize multiple cancel/add requests.
+        sql='SELECT id,seller_id,status,start_date FROM clients WHERE id=?'
+        if DATABASE_URL: sql+=' FOR UPDATE'
+        locked=c.execute(sql,(client_id,)).fetchone()
+        if not locked:abort(404)
+        if actor['role']!='admin' and locked['seller_id']!=actor['id']:abort(403)
+        last=c.execute('''SELECT * FROM payments WHERE client_id=? ORDER BY period_end DESC,id DESC LIMIT 1''',(client_id,)).fetchone()
+        if not last or last['id']!=payment_id:
+            flash('Somente o último pagamento do cliente pode ser estornado.','error')
+            return redirect(url_for('client_detail',client_id=client_id))
+        if last['commission_status']=='paid' and actor['role']!='admin':
+            flash('A comissão já foi repassada. Peça ao Geral para estornar o pagamento e acertar o repasse.','error')
+            return redirect(url_for('client_detail',client_id=client_id))
+        c.execute('''INSERT INTO payment_cancellations (
+            client_id,original_payment_id,seller_id,cancelled_by,reason,paid_on,
+            amount_cents,period_start,period_end,commission_cents,commission_rate,
+            commission_status,tier_snapshot,cycle_snapshot,monthly_price_snapshot_cents)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+            client_id,last['id'],last['seller_id'],actor['id'],reason,last['paid_on'],
+            last['amount_cents'],last['period_start'],last['period_end'],
+            last['commission_cents'],last['commission_rate'],last['commission_status'],
+            last['tier_snapshot'],last['cycle_snapshot'],last['monthly_price_snapshot_cents']))
         c.execute('DELETE FROM payments WHERE id=? AND client_id=?',(payment_id,client_id))
-        last=c.execute('SELECT period_end FROM payments WHERE client_id=? ORDER BY period_end DESC,id DESC LIMIT 1',(client_id,)).fetchone()
-        client=c.execute('SELECT start_date,cycle FROM clients WHERE id=?',(client_id,)).fetchone()
-        due=last['period_end'] if last else None
-        if last:
-            c.execute('UPDATE clients SET due_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(due,client_id))
+        previous=c.execute('''SELECT period_end FROM payments WHERE client_id=?
+                    ORDER BY period_end DESC,id DESC LIMIT 1''',(client_id,)).fetchone()
+        if previous:
+            # Keep cancelled subscriptions cancelled; otherwise go back to active.
+            new_status='cancelled' if locked['status']=='cancelled' else 'active'
+            c.execute('UPDATE clients SET due_date=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                      (previous['period_end'],new_status,client_id))
         else:
-            c.execute("UPDATE clients SET status='lead',due_date=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",(client_id,))
-    flash('Lançamento excluído e vencimento recalculado. Confira o histórico.','success')
+            # With no confirmed payments the client cannot remain an active subscriber.
+            new_status='cancelled' if locked['status']=='cancelled' else 'lead'
+            c.execute('UPDATE clients SET due_date=NULL,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                      (new_status,client_id))
+    flash('Último pagamento estornado. A comissão foi retirada dos totais e o cadastro foi preservado.','success')
     return redirect(url_for('client_detail',client_id=client_id))
 
 

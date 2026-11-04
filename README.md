@@ -46,3 +46,17 @@ Atualização exclusivamente visual: elevação, leve efeito 3D nos cards, sombr
 - A confirmação muda a etapa do cliente para **Cancelado**; o cadastro e os pagamentos/comissões históricos permanecem intactos.
 - Clientes cancelados deixam de entrar nas previsões de renovações futuras.
 - Excluir um cliente ou pagamento continua restrito ao Geral.
+
+
+## Cancelamento de PAGAMENTO (independente da assinatura)
+- Cada vendedor pode **estornar o último pagamento** de um cliente sob sua responsabilidade; o administrador Geral pode estornar o último pagamento de qualquer cliente.
+- O motivo do estorno é obrigatório e o sistema pede confirmação.
+- Ao estornar, o pagamento deixa de contar no faturamento e a comissão correspondente sai dos totais do mês, evitando duplicidade.
+- O histórico do estorno é mantido em `payment_cancellations` com valor, período, comissão, motivo e usuário responsável.
+- O próximo vencimento é recalculado pelo último pagamento restante. Sem nenhum pagamento confirmado, o cliente volta a **Para entrar** (se já estava Cancelado, permanece Cancelado).
+- Se a comissão daquele pagamento **já tiver sido repassada**, apenas o Geral pode estornar, pois será necessário acertar o valor com o vendedor.
+- Não é permitido estornar um pagamento intermediário: é necessário começar pelo mais recente para não romper a sequência de períodos.
+- A mudança cria uma nova tabela de auditoria automaticamente na primeira requisição, sem excluir tabelas existentes do Neon USA.
+
+## Ordenação de clientes
+Na página Clientes, use **Ordenar por** para selecionar cadastro mais recente, mais antigo, nome A–Z ou Z–A. A busca e a categoria selecionada são preservadas. A data é a de criação do registro (não a última edição).

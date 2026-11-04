@@ -48,3 +48,16 @@ input,textarea,select{border-radius:11px;border-color:#dde3ef;transition:border-
 .danger-zone p{margin:0 0 15px;color:#80515a;font-size:13px;line-height:1.55}
 .btn.danger{background:#ad2842;color:#fff;border:1px solid #ad2842}
 .btn.danger:hover{background:#911e34;box-shadow:0 8px 22px rgba(173,40,66,.2)}
+
+/* Estorno financeiro com auditoria */
+.payment-reason{display:block;margin-top:12px;margin-bottom:10px;font-size:12px;font-weight:600;color:#475569}
+.payment-reason input{display:block;width:100%;margin-top:6px;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;background:#fff}
+.cancelled-heading{margin:24px 0 4px;font-size:15px}
+.cancelled-payment{opacity:.82;border-left:3px solid #b45353;padding-left:12px}
+
+/* Ordenação da listagem de clientes */
+.search{align-items:end;flex-wrap:wrap}
+.search .sort-control{min-width:210px;max-width:260px;flex:0 1 260px;gap:5px}
+.search .sort-control span{font-size:11px;font-weight:700;color:#677084}
+.search .sort-control select{width:100%;min-height:44px;background:#fff}
+@media(max-width:650px){.search input,.search .sort-control{width:100%;max-width:none;flex:1 1 100%}.search button{width:100%}}
