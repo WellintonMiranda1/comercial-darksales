@@ -42,3 +42,26 @@ document.querySelectorAll('form[data-confirm]').forEach(form=>form.addEventListe
   [status,cycle,start].forEach(e=>e.addEventListener('change',refresh));
   refresh();
 })();
+
+
+// Microinterações opcionais: inclinação discreta dos cards, sem bloquear cliques.
+(function(){
+  const reduced=window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const precise=window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  if(reduced||!precise)return;
+  document.querySelectorAll('.stat, .commission-tile').forEach(card=>{
+    card.classList.add('ds-tilt');
+    card.addEventListener('pointermove',event=>{
+      const rect=card.getBoundingClientRect();
+      if(!rect.width||!rect.height)return;
+      const x=((event.clientX-rect.left)/rect.width-.5)*2;
+      const y=((event.clientY-rect.top)/rect.height-.5)*2;
+      card.style.setProperty('--tilt-x',(-y*2.6).toFixed(2)+'deg');
+      card.style.setProperty('--tilt-y',(x*2.6).toFixed(2)+'deg');
+    },{passive:true});
+    card.addEventListener('pointerleave',()=>{
+      card.style.removeProperty('--tilt-x');
+      card.style.removeProperty('--tilt-y');
+    });
+  });
+})();

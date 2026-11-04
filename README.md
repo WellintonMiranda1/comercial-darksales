@@ -27,3 +27,7 @@ A Vercel atualizará o deploy conectado ao GitHub. Mantenha `NEON_USA_DATABASE_U
 - Pagamentos registrados na base permanecem; correções novas não apagam histórico.
 - Caso o banco não possua os novos campos, a aplicação os adicionará automaticamente no primeiro acesso.
 - Não foi possível testar uma conexão real com seu banco Neon a partir deste ambiente.
+
+
+## Versão visual premium — novembro de 2026
+Atualização exclusivamente visual: elevação, leve efeito 3D nos cards, sombras, gradientes, estados hover/foco e layout responsivo. Não modifica regras financeiras, tabelas ou configuração do Neon USA.
