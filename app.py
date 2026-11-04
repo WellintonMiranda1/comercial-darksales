@@ -20,7 +20,7 @@ app = Flask(__name__, instance_path=str(BASE / 'instance'))
 app.config.update(SECRET_KEY=os.environ.get('DARKSALES_SECRET_KEY') or secrets.token_hex(32),
     MAX_CONTENT_LENGTH=3*1024*1024, SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('DARKSALES_HTTPS')=='1')
-DATABASE_URL = os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL')
+DATABASE_URL = os.environ.get('NEON_USA_DATABASE_URL') or os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL')
 IS_VERCEL = bool(os.environ.get('VERCEL'))
 # Vercel permits writing only to /tmp. Without DATABASE_URL the full app runs
 # with TEMPORARY local storage. For permanent shared records, add PostgreSQL later.
@@ -157,6 +157,18 @@ def today():return date.today().isoformat()
 def get_user():
     if not session.get('uid'):return None
     with db() as c: return c.execute('SELECT * FROM users WHERE id=? AND active=1',(session['uid'],)).fetchone()
+
+
+# Inicializar o banco ANTES de ler a sessão: a Vercel pode iniciar uma
+# instância nova a cada requisição. Sessões antigas nunca devem causar erro 500.
+_database_ready = False
+
+@app.before_request
+def ensure_database_before_auth():
+    global _database_ready
+    if not _database_ready:
+        init_db()
+        _database_ready = True
 
 
 @app.before_request
@@ -562,17 +574,6 @@ def clients_export():
 @app.errorhandler(400)
 def err(e):return render_template('error.html',error=str(e)),e.code
 
-
-if not IS_VERCEL:
-    init_db()
-else:
-    _database_ready = False
-    @app.before_request
-    def ensure_initialized():
-        global _database_ready
-        if not _database_ready:
-            init_db()
-            _database_ready = True
 
 if __name__=='__main__':
     app.run(host=os.getenv('DARKSALES_HOST','127.0.0.1'),port=int(os.getenv('PORT','5000')),debug=False)
