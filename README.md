@@ -71,3 +71,7 @@ A migração não destrutiva cria automaticamente as duas colunas em bancos Neon
 
 ## Origem na listagem de clientes
 A tabela Clientes exibe a coluna **Origem** entre **Status** e **Plano**. Para origem Indicação, também mostra o nome de quem indicou. Os cadastros já existentes não são modificados.
+
+
+## Projeção de entrada
+Em Para entrar ou Trial, preencha a data prevista, plano previsto, periodicidade e valor mensal previsto. Na listagem Clientes, a coluna Data prevista aparece após Data do cadastro e há ordenação por data prevista. Registros antigos são mantidos por migração não destrutiva. A projeção não gera pagamento nem comissão.

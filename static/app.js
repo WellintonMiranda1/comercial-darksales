@@ -28,6 +28,7 @@ document.querySelectorAll('form[data-confirm]').forEach(form=>form.addEventListe
     const active=st==='active'||st==='late'||st==='cancelled';
     document.querySelectorAll('[data-active-only]').forEach(el=>el.hidden=!active);
     document.querySelectorAll('[data-trial-only]').forEach(el=>el.hidden=st!=='trial');
+    document.querySelectorAll('[data-projection-only]').forEach(el=>el.hidden=st!=='lead' && st!=='trial');
     document.querySelectorAll('[data-lead-only]').forEach(el=>el.hidden=st!=='lead');
     if(active && !start.value){
       const now=new Date();

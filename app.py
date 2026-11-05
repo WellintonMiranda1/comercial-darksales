@@ -82,7 +82,7 @@ def init_db():
           status TEXT NOT NULL DEFAULT 'lead', tier TEXT NOT NULL DEFAULT 'Básico',
           cycle TEXT NOT NULL DEFAULT 'monthly', monthly_price_cents INTEGER NOT NULL DEFAULT 0,
           start_date TEXT, due_date TEXT, trial_end TEXT, call_date TEXT,
-          notes TEXT DEFAULT '', origin TEXT NOT NULL DEFAULT 'lead', referred_by TEXT DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          notes TEXT DEFAULT '', origin TEXT NOT NULL DEFAULT 'lead', referred_by TEXT DEFAULT '', projected_date TEXT, projected_tier TEXT, projected_cycle TEXT, projected_monthly_price_cents INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS payments (
@@ -125,6 +125,10 @@ def init_db():
         for column, coltype in (
             ('origin', "TEXT NOT NULL DEFAULT 'lead'"),
             ('referred_by', "TEXT DEFAULT ''"),
+            ('projected_date', 'TEXT'),
+            ('projected_tier', 'TEXT'),
+            ('projected_cycle', 'TEXT'),
+            ('projected_monthly_price_cents', 'INTEGER NOT NULL DEFAULT 0'),
         ):
             if DATABASE_URL:
                 c.execute(f'ALTER TABLE clients ADD COLUMN IF NOT EXISTS {column} {coltype}')
@@ -309,7 +313,9 @@ def clients():
     sort_options={'newest':'cl.created_at DESC,cl.id DESC',
                   'oldest':'cl.created_at ASC,cl.id ASC',
                   'name_asc':'LOWER(cl.name) ASC,cl.id ASC',
-                  'name_desc':'LOWER(cl.name) DESC,cl.id DESC'}
+                  'name_desc':'LOWER(cl.name) DESC,cl.id DESC',
+                  'projected_asc':"CASE WHEN cl.projected_date IS NULL OR cl.projected_date='' THEN 1 ELSE 0 END, cl.projected_date ASC,cl.id ASC",
+                  'projected_desc':"CASE WHEN cl.projected_date IS NULL OR cl.projected_date='' THEN 1 ELSE 0 END, cl.projected_date DESC,cl.id DESC"}
     if sort not in sort_options:sort='newest'
     sql='SELECT cl.*,u.name seller_name FROM clients cl JOIN users u ON u.id=cl.seller_id WHERE 1=1';args=[]
     if u['role']!='admin':sql+=' AND cl.seller_id=?';args.append(u['id'])
@@ -362,6 +368,16 @@ def client_form_data(existing=None):
         due_date=existing['due_date']
     vals.extend([start_date or None,due_date,trial_end or None,call_date or None])
     vals.extend([request.form.get('notes','').strip(),origin,referred_by])
+    # Projeção comercial não cria pagamentos nem comissões.
+    projected_date=request.form.get('projected_date','').strip()
+    if projected_date:
+        date.fromisoformat(projected_date)
+    projected_tier=request.form.get('projected_tier','').strip()
+    projected_cycle=request.form.get('projected_cycle','').strip()
+    projected_amount=cents_from_form(request.form.get('projected_monthly_price','0'))
+    if projected_tier and projected_tier not in TIERS:raise ValueError('Plano previsto inválido.')
+    if projected_cycle and projected_cycle not in CYCLES:raise ValueError('Periodicidade prevista inválida.')
+    vals.extend([projected_date or None, projected_tier or None, projected_cycle or None, projected_amount])
     return vals
 
 
@@ -390,12 +406,12 @@ def new_client():
             with db() as c:
                 # Não marcar dinheiro como recebido sem a confirmação explícita.
                 if DATABASE_URL:
-                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes,origin,referred_by)
-                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''', vals)
+                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes,origin,referred_by,projected_date,projected_tier,projected_cycle,projected_monthly_price_cents)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''', vals)
                     client_id=inserted.fetchone()['id']
                 else:
-                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes,origin,referred_by)
-                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
+                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes,origin,referred_by,projected_date,projected_tier,projected_cycle,projected_monthly_price_cents)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
                     client_id=inserted.lastrowid
                 if vals[5]=='active' and request.form.get('payment_confirmed')=='on':
                     if vals[8] <= 0: raise ValueError('Informe um valor mensal antes de confirmar o pagamento.')
@@ -413,7 +429,7 @@ def client_detail(client_id):
         try:
             vals=client_form_data(row)
             with db() as c:
-                c.execute('''UPDATE clients SET name=?,company=?,phone=?,email=?,seller_id=?,status=?,tier=?,cycle=?,monthly_price_cents=?,start_date=?,due_date=?,trial_end=?,call_date=?,notes=?,origin=?,referred_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',vals+[client_id])
+                c.execute('''UPDATE clients SET name=?,company=?,phone=?,email=?,seller_id=?,status=?,tier=?,cycle=?,monthly_price_cents=?,start_date=?,due_date=?,trial_end=?,call_date=?,notes=?,origin=?,referred_by=?,projected_date=?,projected_tier=?,projected_cycle=?,projected_monthly_price_cents=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',vals+[client_id])
                 # Pagamentos são lançados somente pelo formulário financeiro separado.
                 # Editar uma ficha nunca gera uma nova comissão.
             flash('Cliente atualizado.','success');return redirect(url_for('client_detail',client_id=client_id))
@@ -729,8 +745,8 @@ def clients_export():
     if u['role']!='admin':sql+=' WHERE cl.seller_id=?';params=[u['id']]
     with db() as c:rows=c.execute(sql,params).fetchall()
     stream=io.StringIO();out=csv.writer(stream)
-    out.writerow(['Cliente','Empresa','Telefone','Email','Vendedor','Situação','Plano','Periodicidade','Mensalidade (R$)','Vencimento','Fim do trial','Notas'])
-    for x in rows:out.writerow([x['name'],x['company'],x['phone'],x['email'],x['seller_name'],STATUSES[x['status']],x['tier'],CYCLES[x['cycle']][0],f'{x["monthly_price_cents"]/100:.2f}',x['due_date'],x['trial_end'],x['notes']])
+    out.writerow(['Cliente','Empresa','Telefone','Email','Vendedor','Situação','Plano','Periodicidade','Mensalidade (R$)','Vencimento','Fim do trial','Data prevista','Plano previsto','Periodicidade prevista','Valor mensal previsto (R$)','Notas'])
+    for x in rows:out.writerow([x['name'],x['company'],x['phone'],x['email'],x['seller_name'],STATUSES[x['status']],x['tier'],CYCLES[x['cycle']][0],f'{x["monthly_price_cents"]/100:.2f}',x['due_date'],x['trial_end'],x['projected_date'],x['projected_tier'],CYCLES[x['projected_cycle']][0] if x['projected_cycle'] in CYCLES else '',f'{x["projected_monthly_price_cents"]/100:.2f}',x['notes']])
     return Response('\ufeff'+stream.getvalue(),mimetype='text/csv',headers={'Content-Disposition':'attachment; filename="clientes-darksales.csv"'})
 
 
