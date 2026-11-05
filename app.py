@@ -241,7 +241,7 @@ def security_check():
 
 @app.context_processor
 def inject():
-    return dict(me=get_user(), csrf=session.get('csrf',''), statuses=STATUSES, tiers=TIERS, cycles=CYCLES, money=fmt, today=today(), today_date=date.today(),next5=(date.today()+timedelta(days=5)).isoformat())
+    return dict(me=get_user(), csrf=session.get('csrf',''), statuses=STATUSES, origins=ORIGINS, tiers=TIERS, cycles=CYCLES, money=fmt, today=today(), today_date=date.today(),next5=(date.today()+timedelta(days=5)).isoformat())
 
 
 def admin_only(fn):

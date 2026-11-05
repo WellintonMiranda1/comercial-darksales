@@ -68,3 +68,6 @@ O formulário de cadastro e edição possui **Origem do cliente**: Lead, Prospec
 Ao selecionar **Indicação**, o campo obrigatório **Quem indicou?** é exibido.
 As informações são validadas também no servidor e gravadas em `clients.origin` e `clients.referred_by`.
 A migração não destrutiva cria automaticamente as duas colunas em bancos Neon/PostgreSQL e SQLite existentes, preservando os cadastros antigos (origem padrão: Lead).
+
+## Origem na listagem de clientes
+A tabela Clientes exibe a coluna **Origem** entre **Status** e **Plano**. Para origem Indicação, também mostra o nome de quem indicou. Os cadastros já existentes não são modificados.
