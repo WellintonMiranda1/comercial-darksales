@@ -65,3 +65,19 @@ document.querySelectorAll('form[data-confirm]').forEach(form=>form.addEventListe
     });
   });
 })();
+
+// Origem do cliente: indicação exige identificar quem indicou.
+(function(){
+  const select=document.querySelector('select[name="origin"]');
+  const container=document.querySelector('[data-referral-only]');
+  const input=document.querySelector('input[name="referred_by"]');
+  if(!select || !container || !input)return;
+  function refresh(){
+    const referral=select.value==='indicacao';
+    container.hidden=!referral;
+    input.required=referral;
+    input.disabled=!referral;
+  }
+  select.addEventListener('change',refresh);
+  refresh();
+})();

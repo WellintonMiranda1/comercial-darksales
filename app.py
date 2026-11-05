@@ -34,6 +34,7 @@ if not DATABASE_URL:
     UPLOADS.mkdir(parents=True, exist_ok=True)
 STATUSES = {'lead':'Para entrar', 'trial':'Em trial', 'active':'Ativo', 'late':'Inadimplente', 'cancelled':'Cancelado', 'lost':'Perdido'}
 TIERS = ('Básico','Intermediário','Completo')
+ORIGINS = {'lead':'Lead', 'prospeccao':'Prospecção', 'indicacao':'Indicação', 'outro':'Outro'}
 CYCLES = {'monthly':('Mensal',1,.10),'semiannual':('Semestral',6,.15),'annual':('Anual',12,.20)}
 
 
@@ -81,7 +82,7 @@ def init_db():
           status TEXT NOT NULL DEFAULT 'lead', tier TEXT NOT NULL DEFAULT 'Básico',
           cycle TEXT NOT NULL DEFAULT 'monthly', monthly_price_cents INTEGER NOT NULL DEFAULT 0,
           start_date TEXT, due_date TEXT, trial_end TEXT, call_date TEXT,
-          notes TEXT DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          notes TEXT DEFAULT '', origin TEXT NOT NULL DEFAULT 'lead', referred_by TEXT DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS payments (
@@ -119,6 +120,18 @@ def init_db():
         c.executescript(schema)
         if DATABASE_URL:
             c.execute('CREATE TABLE IF NOT EXISTS avatar_images (filename TEXT PRIMARY KEY, content BYTEA NOT NULL)')
+        # Migração não destrutiva: adicionar origem aos clientes existentes.
+        # Os cadastros antigos recebem 'Lead' por padrão e podem ser editados.
+        for column, coltype in (
+            ('origin', "TEXT NOT NULL DEFAULT 'lead'"),
+            ('referred_by', "TEXT DEFAULT ''"),
+        ):
+            if DATABASE_URL:
+                c.execute(f'ALTER TABLE clients ADD COLUMN IF NOT EXISTS {column} {coltype}')
+            else:
+                columns = {row['name'] for row in c.execute('PRAGMA table_info(clients)').fetchall()}
+                if column not in columns:
+                    c.execute(f'ALTER TABLE clients ADD COLUMN {column} {coltype}')
         # Migração não destrutiva: preservar histórico financeiro e registrar
         # as condições da venda no próprio pagamento, sem depender de futuras edições.
         for column, coltype in (
@@ -321,6 +334,11 @@ def client_form_data(existing=None):
         if not c.execute('SELECT 1 FROM users WHERE id=? AND active=1',(seller_id,)).fetchone():raise ValueError('Vendedor inválido.')
     vals=[name,request.form.get('company','').strip(),request.form.get('phone','').strip(),request.form.get('email','').strip(),seller_id,
           status,tier,cycle,cents_from_form(request.form.get('monthly_price','0'))]
+    origin=request.form.get('origin','lead').strip().lower()
+    referred_by=request.form.get('referred_by','').strip()
+    if origin not in ORIGINS: raise ValueError('Escolha uma origem válida para o cliente.')
+    if origin=='indicacao' and not referred_by: raise ValueError('Informe quem indicou este cliente.')
+    if origin!='indicacao': referred_by=''
     start_date=request.form.get('start_date','').strip()
     trial_end=request.form.get('trial_end','').strip() if status=='trial' else ''
     call_date=request.form.get('call_date','').strip()
@@ -343,7 +361,7 @@ def client_form_data(existing=None):
         # Preservar data da última renovação paga ao editar cadastro.
         due_date=existing['due_date']
     vals.extend([start_date or None,due_date,trial_end or None,call_date or None])
-    vals.append(request.form.get('notes','').strip())
+    vals.extend([request.form.get('notes','').strip(),origin,referred_by])
     return vals
 
 
@@ -372,12 +390,12 @@ def new_client():
             with db() as c:
                 # Não marcar dinheiro como recebido sem a confirmação explícita.
                 if DATABASE_URL:
-                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes)
-                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''', vals)
+                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes,origin,referred_by)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''', vals)
                     client_id=inserted.fetchone()['id']
                 else:
-                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes)
-                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
+                    inserted=c.execute('''INSERT INTO clients(name,company,phone,email,seller_id,status,tier,cycle,monthly_price_cents,start_date,due_date,trial_end,call_date,notes,origin,referred_by)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',vals)
                     client_id=inserted.lastrowid
                 if vals[5]=='active' and request.form.get('payment_confirmed')=='on':
                     if vals[8] <= 0: raise ValueError('Informe um valor mensal antes de confirmar o pagamento.')
@@ -395,7 +413,7 @@ def client_detail(client_id):
         try:
             vals=client_form_data(row)
             with db() as c:
-                c.execute('''UPDATE clients SET name=?,company=?,phone=?,email=?,seller_id=?,status=?,tier=?,cycle=?,monthly_price_cents=?,start_date=?,due_date=?,trial_end=?,call_date=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',vals+[client_id])
+                c.execute('''UPDATE clients SET name=?,company=?,phone=?,email=?,seller_id=?,status=?,tier=?,cycle=?,monthly_price_cents=?,start_date=?,due_date=?,trial_end=?,call_date=?,notes=?,origin=?,referred_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',vals+[client_id])
                 # Pagamentos são lançados somente pelo formulário financeiro separado.
                 # Editar uma ficha nunca gera uma nova comissão.
             flash('Cliente atualizado.','success');return redirect(url_for('client_detail',client_id=client_id))

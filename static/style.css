@@ -61,3 +61,6 @@ input,textarea,select{border-radius:11px;border-color:#dde3ef;transition:border-
 .search .sort-control span{font-size:11px;font-weight:700;color:#677084}
 .search .sort-control select{width:100%;min-height:44px;background:#fff}
 @media(max-width:650px){.search input,.search .sort-control{width:100%;max-width:none;flex:1 1 100%}.search button{width:100%}}
+
+/* Campos condicionais: o atributo hidden precisa prevalecer sobre grid/flex. */
+[data-referral-only][hidden]{display:none!important}

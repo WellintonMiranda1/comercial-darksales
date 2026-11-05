@@ -60,3 +60,11 @@ Atualização exclusivamente visual: elevação, leve efeito 3D nos cards, sombr
 
 ## Ordenação de clientes
 Na página Clientes, use **Ordenar por** para selecionar cadastro mais recente, mais antigo, nome A–Z ou Z–A. A busca e a categoria selecionada são preservadas. A data é a de criação do registro (não a última edição).
+
+
+## Origem dos clientes (atualização)
+
+O formulário de cadastro e edição possui **Origem do cliente**: Lead, Prospecção, Indicação ou Outro.
+Ao selecionar **Indicação**, o campo obrigatório **Quem indicou?** é exibido.
+As informações são validadas também no servidor e gravadas em `clients.origin` e `clients.referred_by`.
+A migração não destrutiva cria automaticamente as duas colunas em bancos Neon/PostgreSQL e SQLite existentes, preservando os cadastros antigos (origem padrão: Lead).
