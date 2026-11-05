@@ -75,3 +75,8 @@ A tabela Clientes exibe a coluna **Origem** entre **Status** e **Plano**. Para o
 
 ## Projeção de entrada
 Em Para entrar ou Trial, preencha a data prevista, plano previsto, periodicidade e valor mensal previsto. Na listagem Clientes, a coluna Data prevista aparece após Data do cadastro e há ordenação por data prevista. Registros antigos são mantidos por migração não destrutiva. A projeção não gera pagamento nem comissão.
+
+
+## Correção — Aba Projeções
+
+Na tela **Clientes → Para entrar**, existem agora duas subabas: **Lista de clientes** e **Projeções**. A segunda mostra clientes com data prevista, agrupados por mês, com valor mensal previsto, plano, periodicidade e vendedor. Clientes sem data prevista permanecem na Lista de clientes. A nova visão não altera cobranças ou comissões.

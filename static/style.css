@@ -64,3 +64,16 @@ input,textarea,select{border-radius:11px;border-color:#dde3ef;transition:border-
 
 /* Campos condicionais: o atributo hidden precisa prevalecer sobre grid/flex. */
 [data-referral-only][hidden]{display:none!important}
+
+/* Projeções — visualização real dentro de Para entrar */
+.projection-tabs{display:flex;gap:8px;margin:0 0 16px;flex-wrap:wrap}
+.projection-tabs a{padding:11px 18px;text-decoration:none;border:1px solid #dce1f4;background:#fff;color:#515a7a;border-radius:12px;font-weight:700;transition:transform .18s,box-shadow .18s,background .18s}
+.projection-tabs a.selected{color:#4b42c8;background:#efedff;border-color:#b8b3ff;box-shadow:0 4px 14px rgba(91,84,198,.1)}
+.projection-tabs a:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(35,35,85,.10)}
+.projection-heading h2{font-size:20px;margin:12px 0 5px}.projection-heading p{color:#7a8399;margin:0 0 20px}
+.projection-month{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#f0f1fb;padding:15px 18px;margin:20px 0 6px;border-radius:14px}
+.projection-month h3{margin:0;font-size:18px}.projection-month span{font-size:12px;color:#68718a;display:block;margin-top:4px}
+.projection-money{font-size:20px;color:#4b42c8;font-weight:800;text-align:right}.projection-money small{display:block;font-size:11px;font-weight:500;color:#707990}
+.empty-projections{text-align:center;color:#66718a;padding:42px 12px}.empty-projections strong{color:#252d45}.empty-projections p{margin-top:10px}
+@media(max-width:640px){.projection-month{align-items:flex-start}.projection-money{font-size:16px}}
+@media(prefers-reduced-motion:reduce){.projection-tabs a{transition:none}.projection-tabs a:hover{transform:none}}

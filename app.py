@@ -310,6 +310,8 @@ def dashboard():
 def clients():
     u=get_user(); status=request.args.get('status','all'); search=request.args.get('q','').strip()
     sort=request.args.get('sort','newest')
+    view=request.args.get('view','list') if status=='lead' else 'list'
+    if view not in ('list','projections'):view='list'
     sort_options={'newest':'cl.created_at DESC,cl.id DESC',
                   'oldest':'cl.created_at ASC,cl.id ASC',
                   'name_asc':'LOWER(cl.name) ASC,cl.id ASC',
@@ -323,7 +325,18 @@ def clients():
     if search:sql+=' AND (cl.name LIKE ? OR cl.company LIKE ? OR cl.phone LIKE ?)';args.extend(['%'+search+'%']*3)
     sql+=' ORDER BY '+sort_options[sort]
     with db() as c: records=c.execute(sql,args).fetchall()
-    return render_template('clients.html',records=records,status=status,q=search,sort=sort)
+    projection_groups=[]
+    if status=='lead' and view=='projections':
+        from collections import defaultdict
+        groups=defaultdict(list)
+        for client in records:
+            if client['projected_date']:
+                groups[client['projected_date'][:7]].append(client)
+        for month in sorted(groups):
+            items=sorted(groups[month], key=lambda cl:(cl['projected_date'],cl['name'].lower()))
+            total_cents=sum(cl['projected_monthly_price_cents'] or 0 for cl in items)
+            projection_groups.append({'month':month,'items':items,'count':len(items),'total_cents':total_cents})
+    return render_template('clients.html',records=records,status=status,q=search,sort=sort,view=view,projection_groups=projection_groups)
 
 
 def seller_choices():
