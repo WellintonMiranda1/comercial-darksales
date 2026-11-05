@@ -77,3 +77,10 @@ input,textarea,select{border-radius:11px;border-color:#dde3ef;transition:border-
 .empty-projections{text-align:center;color:#66718a;padding:42px 12px}.empty-projections strong{color:#252d45}.empty-projections p{margin-top:10px}
 @media(max-width:640px){.projection-month{align-items:flex-start}.projection-money{font-size:16px}}
 @media(prefers-reduced-motion:reduce){.projection-tabs a{transition:none}.projection-tabs a:hover{transform:none}}
+
+/* Projeções v2: destaque visível na lista e campos do cadastro */
+.projection-callout{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 16px;padding:17px 20px;border:1px solid #c6c6fa;background:linear-gradient(110deg,#eeecff,#f8f8ff);border-radius:16px}
+.projection-callout div{display:flex;flex-direction:column;gap:5px}.projection-callout strong{font-size:15px;color:#29255d}.projection-callout span{font-size:13px;color:#626588}.projection-callout a{white-space:nowrap}
+.projection-section{padding:16px 18px;border-radius:14px;background:#efeeff;border:1px solid #c8c3f8;margin-top:9px}.projection-section h3{color:#302a86;margin:0 0 6px}.projection-section p{margin:0}
+.tabs{flex-wrap:wrap}.tabs a.on{font-weight:800}
+@media(max-width:700px){.projection-callout{flex-direction:column;align-items:stretch}.projection-callout a{text-align:center}}

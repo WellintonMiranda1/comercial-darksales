@@ -80,3 +80,12 @@ Em Para entrar ou Trial, preencha a data prevista, plano previsto, periodicidade
 ## Correção — Aba Projeções
 
 Na tela **Clientes → Para entrar**, existem agora duas subabas: **Lista de clientes** e **Projeções**. A segunda mostra clientes com data prevista, agrupados por mês, com valor mensal previsto, plano, periodicidade e vendedor. Clientes sem data prevista permanecem na Lista de clientes. A nova visão não altera cobranças ou comissões.
+
+
+## Projeções v2 — atualização visível
+
+- Na faixa superior de **Clientes** aparece a aba **📅 Projeções**, ao lado de **Para entrar**. Ela abre a visão mensal diretamente.
+- Na lista **Para entrar** há ainda um botão **Abrir Projeções**.
+- No formulário de novo cliente, a seção **📅 Projeção de entrada** aparece quando a etapa é **Para entrar** ou **Trial**.
+- Confirme a publicação: no cabeçalho deve aparecer **Ambiente interno · versão Projeções 2**. Se não aparecer, a Vercel está exibindo uma versão anterior; confirme o commit em Deployments.
+- Valores previstos não entram na receita recebida nem geram comissões.
