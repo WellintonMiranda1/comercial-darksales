@@ -96,6 +96,19 @@ def init_db():
           monthly_price_snapshot_cents INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(client_id,period_start,period_end)
         );
+        CREATE TABLE IF NOT EXISTS sales_projections (
+          id INTEGER PRIMARY KEY,
+          seller_id INTEGER NOT NULL REFERENCES users(id),
+          client_id INTEGER REFERENCES clients(id),
+          lead_name TEXT NOT NULL,
+          projected_date TEXT NOT NULL,
+          amount_cents INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_projections_seller_date ON sales_projections(seller_id,projected_date);
         CREATE TABLE IF NOT EXISTS payment_cancellations (
           id INTEGER PRIMARY KEY,
           client_id INTEGER NOT NULL REFERENCES clients(id),
@@ -304,6 +317,115 @@ def dashboard():
                  if (item := commission_forecast_row(x,next_first.isoformat(),following.isoformat())))
     return render_template('dashboard.html',counts=counts,clients=clients,due=due,late=late,mrr=mrr,
                            current=current,forecast=forecast,payments=payments,next_month=next_first.strftime('%Y-%m'))
+
+
+# Módulo independente de projeções comerciais: valores previstos nunca são
+# lançados como pagamento, receita realizada ou comissão.
+def projection_owner(projection_id):
+    u=get_user()
+    with db() as c:
+        row=c.execute('SELECT * FROM sales_projections WHERE id=?',(projection_id,)).fetchone()
+    if row is None: abort(404)
+    if u['role']!='admin' and row['seller_id']!=u['id']: abort(403)
+    return row
+
+
+def projection_form_values():
+    name=request.form.get('lead_name','').strip()
+    when=request.form.get('projected_date','').strip()
+    if not name: raise ValueError('Informe o nome do cliente ou lead.')
+    try: date.fromisoformat(when)
+    except (ValueError,TypeError): raise ValueError('Informe uma data prevista válida.')
+    amount=cents_from_form(request.form.get('amount','0'))
+    if amount<=0: raise ValueError('Informe um valor previsto maior que zero.')
+    status=request.form.get('projection_status','pending')
+    if status not in ('pending','converted','lost'): raise ValueError('Situação da projeção inválida.')
+    u=get_user()
+    seller_id=int(request.form.get('seller_id') or u['id']) if u['role']=='admin' else u['id']
+    with db() as c:
+        if not c.execute('SELECT 1 FROM users WHERE id=? AND active=1',(seller_id,)).fetchone():
+            raise ValueError('Vendedor inválido.')
+    notes=request.form.get('notes','').strip()
+    return [seller_id,name,when,amount,status,notes]
+
+
+@app.route('/projecao')
+def projections():
+    u=get_user()
+    search=request.args.get('q','').strip()
+    history=request.args.get('history')=='1'
+    seller_filter=request.args.get('seller','').strip()
+    where=[];args=[]
+    if u['role']!='admin':
+        where.append('p.seller_id=?');args.append(u['id'])
+    elif seller_filter.isdigit():
+        where.append('p.seller_id=?');args.append(int(seller_filter))
+    where.append("p.status IN ('converted','lost')" if history else "p.status='pending'")
+    if search:
+        where.append('LOWER(p.lead_name) LIKE ?');args.append('%'+search.lower()+'%')
+    sql='SELECT p.*,u.name AS seller_name FROM sales_projections p JOIN users u ON p.seller_id=u.id WHERE '+ ' AND '.join(where)
+    sql+=' ORDER BY p.projected_date ASC,p.id DESC' if not history else ' ORDER BY p.updated_at DESC,p.id DESC'
+    with db() as c:
+        records=c.execute(sql,args).fetchall()
+    now=date.today();month=now.strftime('%Y-%m');next_month=add_months(now.replace(day=1).isoformat(),1)[:7]
+    # Os indicadores representam toda a carteira do vendedor/da equipe,
+    # independentemente do texto usado no campo de pesquisa.
+    summary_sql="SELECT p.projected_date,p.amount_cents FROM sales_projections p WHERE p.status='pending'"
+    summary_args=[]
+    if u['role']!='admin': summary_sql+=' AND p.seller_id=?';summary_args.append(u['id'])
+    elif seller_filter.isdigit(): summary_sql+=' AND p.seller_id=?';summary_args.append(int(seller_filter))
+    with db() as c: summary=c.execute(summary_sql,summary_args).fetchall()
+    total=sum(r['amount_cents'] for r in summary)
+    current=[r for r in summary if r['projected_date'][:7]==month]
+    upcoming=[r for r in summary if r['projected_date'][:7]==next_month]
+    from collections import defaultdict
+    groups=defaultdict(list)
+    for r in records: groups[r['projected_date'][:7]].append(r)
+    by_month=[{'month':m,'label':date.fromisoformat(m+'-01').strftime('%m/%Y'),
+               'count':len(groups[m]),'amount':sum(r['amount_cents'] for r in groups[m]),
+               'items':groups[m]} for m in sorted(groups)]
+    return render_template('projections.html',records=records,groups=by_month,
+        total=total,current_count=len(current),current_sum=sum(r['amount_cents'] for r in current),
+        next_count=len(upcoming),next_sum=sum(r['amount_cents'] for r in upcoming),
+        month_label=date.fromisoformat(month+'-01').strftime('%m/%Y'),
+        next_label=date.fromisoformat(next_month+'-01').strftime('%m/%Y'),
+        history=history,q=search,seller_filter=seller_filter,sellers=seller_choices())
+
+
+@app.route('/projecao/nova',methods=['GET','POST'])
+def projection_new():
+    if request.method=='POST':
+        try:
+            vals=projection_form_values()
+            with db() as c:
+                c.execute('INSERT INTO sales_projections(seller_id,lead_name,projected_date,amount_cents,status,notes) VALUES (?,?,?,?,?,?)',vals)
+            flash('Projeção cadastrada.','success')
+            return redirect(url_for('projections'))
+        except (ValueError,TypeError) as e: flash(str(e),'error')
+    return render_template('projection_form.html',projection=None,sellers=seller_choices())
+
+
+@app.route('/projecao/<int:projection_id>/editar',methods=['GET','POST'])
+def projection_edit(projection_id):
+    projection=projection_owner(projection_id)
+    if request.method=='POST':
+        try:
+            vals=projection_form_values()
+            with db() as c:
+                c.execute("UPDATE sales_projections SET seller_id=?,lead_name=?,projected_date=?,amount_cents=?,status=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",vals+[projection_id])
+            flash('Projeção atualizada.','success')
+            return redirect(url_for('projections',history='1' if vals[4]!='pending' else '0'))
+        except (ValueError,TypeError) as e:flash(str(e),'error')
+    return render_template('projection_form.html',projection=projection,sellers=seller_choices())
+
+
+@app.post('/projecao/<int:projection_id>/excluir')
+def projection_delete(projection_id):
+    row=projection_owner(projection_id)
+    if request.form.get('confirm_delete')!='EXCLUIR':abort(400)
+    with db() as c:c.execute('DELETE FROM sales_projections WHERE id=?',(projection_id,))
+    flash('Projeção excluída.','success')
+    return redirect(url_for('projections',history='1' if row['status']!='pending' else '0'))
 
 
 @app.route('/clients')

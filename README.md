@@ -89,3 +89,12 @@ Na tela **Clientes → Para entrar**, existem agora duas subabas: **Lista de cli
 - No formulário de novo cliente, a seção **📅 Projeção de entrada** aparece quando a etapa é **Para entrar** ou **Trial**.
 - Confirme a publicação: no cabeçalho deve aparecer **Ambiente interno · versão Projeções 2**. Se não aparecer, a Vercel está exibindo uma versão anterior; confirme o commit em Deployments.
 - Valores previstos não entram na receita recebida nem geram comissões.
+
+
+## Módulo independente: Projeção Comercial
+- Novo item **Projeção** no menu lateral, separado de Clientes.
+- Cards: projeção total pendente, valor e número de clientes do mês atual, valor e número do próximo mês.
+- Listagem agrupada por mês, busca, filtro por vendedor (Geral), criar/editar/excluir e histórico de convertidas/perdidas.
+- Nenhuma porcentagem, probabilidade ou total geral de leads.
+- Valores de projeções não geram pagamentos ou comissões.
+- Tabela `sales_projections` criada automaticamente em SQLite ou PostgreSQL sem alterar tabelas existentes.
